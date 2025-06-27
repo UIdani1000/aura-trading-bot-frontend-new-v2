@@ -5,6 +5,12 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, User as FirebaseAuthUser, Auth } from 'firebase/auth';
 import { Firestore, getFirestore } from 'firebase/firestore'; // Import Firestore type here
 
+// Declare global variables that are injected by the Canvas environment or Vercel build process.
+// This tells TypeScript they exist, preventing 'Cannot find name' errors during compilation.
+declare const __firebase_config: string;
+declare const __initial_auth_token: string;
+
+
 // Define the shape of the Firebase context
 interface FirebaseContextType {
   db: Firestore | null;
@@ -31,6 +37,8 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({ children }) 
     let app;
     // Check if Firebase app is already initialized
     if (!getApps().length) {
+      // Safely parse __firebase_config, which is declared as a global const.
+      // It's expected to be provided by the environment (Canvas or Vercel build).
       const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
       app = initializeApp(firebaseConfig);
     } else {
@@ -50,7 +58,8 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({ children }) 
         setIsAuthReady(true);
       } else {
         // If no user, try to sign in anonymously using __initial_auth_token
-        // This ensures a userId is always available for Firestore rules
+        // This ensures a userId is always available for Firestore rules.
+        // Safely check and use __initial_auth_token, which is declared as a global const.
         try {
           if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(authInstance, __initial_auth_token);

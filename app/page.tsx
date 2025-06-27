@@ -231,7 +231,7 @@ function TradingDashboardContent() {
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [currentChatSessionId, setCurrentChatSessionId] = useState<string | null>(null);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null); // CORRECTED: Initialized with null
   const audioChunksRef = useRef<Blob[]>([]);
 
   const [aiAssistantName] = useState("Aura");
@@ -428,7 +428,7 @@ function TradingDashboardContent() {
       }
       setCurrentAlert({ message: `Analysis failed: ${error.message || "Unknown error"}. Check backend deployment.`, type: "error" });
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest]); // Removed BACKEND_BASE_URL and appId from deps
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert]); // REMOVED BACKEND_BASE_URL and appId from deps
 
 
   const fetchBackendChatResponse = useCallback(async (requestBody: any) => {
@@ -491,7 +491,7 @@ function TradingDashboardContent() {
       setIsSendingMessage(false);
       console.log("DIAG: Backend fetch finished.");
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest, setIsSendingMessage]); // Removed BACKEND_BASE_URL and appId from deps
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest, setIsSendingMessage]); // Removed BACKEND_BASE_URL and appId from deps as they are constants
 
 
   const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {
@@ -574,7 +574,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Error sending message: ${error.message || "Unknown error"}`, type: "error" });
       setIsSendingMessage(false);
     }
-  }, [messageInput, db, userId, currentChatSessionId, isAuthReady, chatMessages, chatSessions, fetchBackendChatResponse, setMessageInput, setCurrentAlert, setIsSendingMessage]);
+  }, [messageInput, db, userId, currentChatSessionId, isAuthReady, chatMessages, chatSessions, fetchBackendChatResponse, setMessageInput, setCurrentAlert, setIsSendingMessage]); // Removed appId from deps
 
 
   const handleStartVoiceRecording = useCallback(async () => {
@@ -893,7 +893,7 @@ function TradingDashboardContent() {
       setChatSessions([]);
       console.log("DIAG: Chat sessions listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, ")");
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatSessions, setCurrentChatSessionId, setCurrentAlert]);
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatSessions, setCurrentChatSessionId, setCurrentAlert]); // REMOVED appId from deps
 
 
   useEffect(() => {
@@ -927,7 +927,7 @@ function TradingDashboardContent() {
       setChatMessages([]);
       console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isAuthReady:", isAuthReady, ")");
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert]);
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert]); // REMOVED appId from deps
 
   useEffect(() => {
     if (chatMessagesEndRef.current) {
@@ -959,7 +959,7 @@ function TradingDashboardContent() {
         setLoadingPrices(false);
       }
     }
-  }, [setLoadingPrices, setErrorPrices, setMarketPrices]);
+  }, [setLoadingPrices, setErrorPrices, setMarketPrices]); // REMOVED BACKEND_BASE_URL from deps
 
 
   useEffect(() => {
@@ -990,7 +990,7 @@ function TradingDashboardContent() {
       console.error("DIAG: Error fetching live price for analysis page:", e);
       setCurrentLivePrice('Error');
     }
-  }, [setCurrentLivePrice]);
+  }, [setCurrentLivePrice]); // REMOVED BACKEND_BASE_URL from deps
 
   useEffect(() => {
     if (activeView === 'analysis') {
@@ -1037,7 +1037,7 @@ function TradingDashboardContent() {
       setLoadingTradeLogs(false);
       console.log("DIAG: Trade logs listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, ")");
     }
-  }, [db, userId, isAuthReady, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert]);
+  }, [db, userId, isAuthReady, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert]); // REMOVED appId from deps
 
 
   return (
@@ -1130,7 +1130,7 @@ function TradingDashboardContent() {
           <h1 className="text-xl font-semibold">Aura Trading Dashboard</h1>
           <div className="ml-auto flex items-center space-x-4">
             <Bell className="h-6 w-6 text-gray-400" />
-            <span className="text-sm text-gray-400 mr-2">User ID: {userId ? `${userId.substring(0, 8)}...` : 'Loading User...'}</span>
+            <span className="text-sm text-gray-400 mr-2">User ID: {userId ? `${userId.substring(0, 8)}...)` : 'Loading User...'}</span>
             <User className="h-6 w-6 text-gray-400" />
           </div>
         </header>

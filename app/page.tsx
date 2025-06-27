@@ -242,9 +242,9 @@ function TradingDashboardContent() {
   const [isSavingJournal, setIsSavingJournal] = useState(false)
   const [tradeLogError, setTradeLogError] = useState<string | null>(null);
 
-  // Settings states
-  const [backendUrlSetting] = useState(BACKEND_BASE_URL); // Removed _setBackendUrlSetting
-  const [appIdSetting] = useState(appId); // Removed _setAppIdSetting
+  // Settings states - CORRECTED these lines
+  const [backendUrlSetting, setBackendUrlSetting] = useState(BACKEND_BASE_URL);
+  const [appIdSetting, setAppIdSetting] = useState(appId);
 
 
   // --- HANDLERS ---

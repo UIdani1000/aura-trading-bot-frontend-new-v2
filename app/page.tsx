@@ -231,7 +231,7 @@ function TradingDashboardContent() {
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [currentChatSessionId, setCurrentChatSessionId] = useState<string | null>(null);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>([]);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
   const [aiAssistantName] = useState("Aura");

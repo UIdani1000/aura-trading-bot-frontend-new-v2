@@ -242,7 +242,7 @@ function TradingDashboardContent() {
   const [isSavingJournal, setIsSavingJournal] = useState(false)
   const [tradeLogError, setTradeLogError] = useState<string | null>(null);
 
-  // Settings states - CORRECTED these lines
+  // Settings states - CORRECTED these lines to be standard useState declarations
   const [backendUrlSetting, setBackendUrlSetting] = useState(BACKEND_BASE_URL);
   const [appIdSetting, setAppIdSetting] = useState(appId);
 
@@ -1299,15 +1299,15 @@ function TradingDashboardContent() {
                                     rehypePlugins={[rehypeRaw]}
                                     components={{
                                       // Custom components for styling Markdown elements
-                                      p: ({_node, ...props}) => <p className="mb-2" {...props} />, // Changed node to _node
-                                      ul: ({_node, ...props}) => <ul className="list-disc list-inside mb-2" {...props} />, // Changed node to _node
-                                      ol: ({_node, ...props}) => <ol className="list-decimal list-inside mb-2" {...props} />, // Changed node to _node
-                                      li: ({_node, ...props}) => <li className="ml-4" {...props} />, // Changed node to _node
-                                      strong: ({_node, ...props}) => <strong className="font-semibold text-white" {...props} />, // Changed node to _node
-                                      em: ({_node, ...props}) => <em className="italic" {...props} />, // Changed node to _node
-                                      h1: ({_node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-2" {...props} />, // Changed node to _node
-                                      h2: ({_node, ...props}) => <h2 className="text-lg font-bold mt-3 mb-1" {...props} />, // Changed node to _node
-                                      h3: ({_node, ...props}) => <h3 className="text-md font-semibold mt-2 mb-1" {...props} />, // Changed node to _node
+                                      p: ({_node, ...props}) => <p className="mb-2" {...props} />,
+                                      ul: ({_node, ...props}) => <ul className="list-disc list-inside mb-2" {...props} />,
+                                      ol: ({_node, ...props}) => <ol className="list-decimal list-inside mb-2" {...props} />,
+                                      li: ({_node, ...props}) => <li className="ml-4" {...props} />,
+                                      strong: ({_node, ...props}) => <strong className="font-semibold text-white" {...props} />,
+                                      em: ({_node, ...props}) => <em className="italic" {...props} />,
+                                      h1: ({_node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-2" {...props} />,
+                                      h2: ({_node, ...props}) => <h2 className="text-lg font-bold mt-3 mb-1" {...props} />,
+                                      h3: ({_node, ...props}) => <h3 className="text-md font-semibold mt-2 mb-1" {...props} />,
                                     }}
                                   >
                                     {msg.text}

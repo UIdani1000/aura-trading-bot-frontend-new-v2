@@ -134,7 +134,6 @@ const CustomAlert: React.FC<{ message: string; type: 'success' | 'error' | 'warn
     'info': 'bg-blue-600'
   }[type];
 
-  // Placeholder useEffect, actual functionality will be added later
   useEffect(() => {
     const timer = setTimeout(onClose, 5000);
     return () => clearTimeout(timer);
@@ -203,7 +202,7 @@ function TradingDashboardContent() {
   ])
   const [analysisBalance, setAnalysisBalance] = useState("10000")
   const [analysisLeverage, setAnalysisLeverage] = useState("1x (No Leverage)")
-  const [analysisResults, setAnalysisResults] = useState<AnalysisResult | null>(null)
+  const [analysisResults, setAnalysisResult] = useState<AnalysisResult | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
 
@@ -258,15 +257,190 @@ function TradingDashboardContent() {
   const handleChatInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {}, []);
 
 
-  // --- USE EFFECTS (Empty for now, will be added incrementally) ---
-  useEffect(() => { /* Chat sessions listener here later */ }, []);
-  useEffect(() => { /* Chat messages listener here later */ }, []);
-  useEffect(() => { /* Scroll to end of chat messages here later */ }, []);
-  const fetchMarketPricesData = useCallback(async (initialLoad = false) => {}, []);
-  useEffect(() => { /* Market data fetching interval here later */ }, []);
-  const fetchAnalysisLivePrice = useCallback(async (pair: string) => {}, []);
-  useEffect(() => { /* Analysis live price fetching interval here later */ }, []);
-  useEffect(() => { /* Trade logs listener here later */ }, []);
+  // --- USE EFFECTS ---
+  useEffect(() => {
+    console.log("DIAG: useEffect for chat sessions listener triggered. db ready:", !!db, "userId ready:", !!userId, "firestoreModule:", !!firestoreModule);
+    if (db && userId && firestoreModule) {
+      const sessionsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions`);
+      const q = firestoreModule.query(sessionsCollectionRef, firestoreModule.orderBy('createdAt', 'desc'));
+
+      const unsubscribe = firestoreModule.onSnapshot(q, (snapshot: any) => {
+        console.log("DIAG: onSnapshot for chat sessions received data.");
+        const sessions = snapshot.docs.map((doc: any) => ({
+          id: doc.id,
+          name: doc.data().name || "Untitled Chat",
+          createdAt: doc.data().createdAt,
+          lastMessageText: doc.data().lastMessageText || "No messages yet.",
+          lastMessageTimestamp: doc.data().lastMessageTimestamp || null
+        })) as ChatSession[];
+        setChatSessions(sessions);
+
+        if (!currentChatSessionId || !sessions.some((s: ChatSession) => s.id === currentChatSessionId)) {
+          if (sessions.length > 0) {
+            setCurrentChatSessionId(sessions[0].id);
+            console.log("DIAG: Setting currentChatSessionId to most recent:", sessions[0].id);
+          } else {
+            setCurrentChatSessionId(null);
+            console.log("DIAG: No chat sessions found, setting currentChatSessionId to null.");
+          }
+        }
+      }, (error: any) => {
+        console.error("DIAG: Error fetching chat sessions:", error);
+        setCurrentAlert({ message: `Failed to load chat sessions: ${error.message || 'Unknown error'}`, type: "error" });
+      });
+
+      return () => {
+        console.log("DIAG: Cleaning up chat sessions listener.");
+        unsubscribe();
+      };
+    } else {
+      setChatSessions([]);
+      console.log("DIAG: Chat sessions listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
+    }
+  }, [db, userId, currentChatSessionId, firestoreModule]);
+
+
+  useEffect(() => {
+    console.log("DIAG: useEffect for chat messages listener triggered. db ready:", !!db, "userId ready:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "firestoreModule:", !!firestoreModule);
+    if (db && userId && currentChatSessionId && firestoreModule) {
+      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+      const q = firestoreModule.query(messagesCollectionRef, firestoreModule.orderBy('timestamp', 'asc'));
+
+      const unsubscribe = firestoreModule.onSnapshot(q, (snapshot: any) => {
+        console.log("DIAG: onSnapshot for chat messages received data for session:", currentChatSessionId);
+        const messages = snapshot.docs.map((doc: any) => ({
+          id: doc.id,
+          sender: doc.data().sender,
+          text: doc.data().text,
+          timestamp: doc.data().timestamp,
+          type: doc.data().type || 'text',
+          audioUrl: doc.data().audioUrl || undefined,
+          analysis: doc.data().analysis || undefined,
+        })) as ChatMessage[];
+        setChatMessages(messages);
+      }, (error: any) => {
+        console.error("DIAG: Error fetching messages for session", currentChatSessionId, ":", error);
+        setCurrentAlert({ message: `Failed to load messages for chat session ${currentChatSessionId}: ${error.message || 'Unknown error'}.`, type: "error" });
+      });
+
+      return () => {
+        console.log("DIAG: Cleaning up chat messages listener.");
+        unsubscribe();
+      };
+    } else {
+      setChatMessages([]);
+      console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "firestoreModule:", !!firestoreModule, ")");
+    }
+  }, [db, userId, currentChatSessionId, firestoreModule]);
+
+  useEffect(() => {
+    if (chatMessagesEndRef.current) {
+        chatMessagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatMessages, activeView, isChatHistoryMobileOpen]);
+
+
+  const fetchMarketPricesData = useCallback(async (initialLoad = false) => {
+    console.log("DIAG: Fetching market prices from:", BACKEND_BASE_URL + "/all_market_prices");
+    try {
+      if (initialLoad) {
+        setLoadingPrices(true);
+      }
+      setErrorPrices(null);
+      const response = await fetch(`${BACKEND_BASE_URL}/all_market_prices`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP error! Status: ${response.status}. Response: ${errorText}`);
+      }
+      const data: AllMarketPrices = await response.json();
+      setMarketPrices(data);
+      console.log("DIAG: Market prices fetched successfully.", data);
+    } catch (error: any) {
+      console.error("DIAG: Error fetching market prices:", error);
+      setErrorPrices(error.message || "Failed to fetch market prices. Check backend URL.");
+    } finally {
+      if (initialLoad) {
+        setLoadingPrices(false);
+      }
+    }
+  }, []); // Dependencies will be added if this function uses external state/props
+
+  useEffect(() => {
+    fetchMarketPricesData(true);
+
+    const intervalId = setInterval(() => fetchMarketPricesData(false), 10000);
+    return () => clearInterval(intervalId);
+  }, [fetchMarketPricesData]); // Dependency array for market data fetching
+
+  const fetchAnalysisLivePrice = useCallback(async (pair: string) => {
+    console.log("DIAG: Fetching analysis live price for:", pair, "from:", BACKEND_BASE_URL + "/all_market_prices");
+    try {
+      const backendSymbol = pair.replace('/', '') + 'T';
+      const response = await fetch(`${BACKEND_BASE_URL}/all_market_prices`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP error! Status: ${response.status}. Response: ${errorText}`);
+      }
+      const data: AllMarketPrices = await response.json();
+      if (data[backendSymbol] && typeof data[backendSymbol].price === 'number') {
+        setCurrentLivePrice(data[backendSymbol].price.toLocaleString());
+        console.log("DIAG: Analysis live price fetched:", data[backendSymbol].price);
+      } else {
+        setCurrentLivePrice('N/A');
+        console.warn("DIAG: Analysis live price not found for", backendSymbol, data);
+      }
+    } catch (e: any) {
+      console.error("DIAG: Error fetching live price for analysis page:", e);
+      setCurrentLivePrice('Error');
+    }
+  }, []); // Dependencies will be added if this function uses external state/props
+
+  useEffect(() => {
+    if (activeView === 'analysis') {
+      fetchAnalysisLivePrice(analysisCurrencyPair);
+      const intervalId = setInterval(() => fetchAnalysisLivePrice(analysisCurrencyPair), 10000);
+      return () => clearInterval(intervalId);
+    }
+  }, [activeView, analysisCurrencyPair, fetchAnalysisLivePrice]); // Dependency array for analysis live price
+
+  useEffect(() => {
+    console.log("DIAG: useEffect for trade logs listener triggered. db ready:", !!db, "userId ready:", !!userId, "firestoreModule:", !!firestoreModule);
+    if (db && userId && firestoreModule) {
+      setLoadingTradeLogs(true);
+      const tradeLogsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`);
+      const q = firestoreModule.query(tradeLogsCollectionRef, firestoreModule.orderBy('timestamp', 'desc'));
+
+      const unsubscribe = firestoreModule.onSnapshot(q, (snapshot: any) => {
+        console.log("DIAG: onSnapshot for trade logs received data.");
+        const logs = snapshot.docs.map((doc: any) => ({
+          id: doc.id,
+          currencyPair: doc.data().currencyPair,
+          entryPrice: doc.data().entryPrice,
+          exitPrice: doc.data().exitPrice,
+          volume: doc.data().volume,
+          profitOrLoss: doc.data().profitOrLoss,
+          timestamp: doc.data().timestamp,
+          journalEntry: doc.data().journalEntry || '',
+        })) as TradeLogEntry[];
+        setTradeLogs(logs);
+        setLoadingTradeLogs(false);
+      }, (error: any) => {
+        console.error("DIAG: Error fetching trade logs:", error);
+        setTradeLogError(error.message || "Failed to load trade logs.");
+        setCurrentAlert({ message: `Failed to load trade logs: ${error.message || 'Unknown error'}`, type: "error" });
+        setLoadingTradeLogs(false);
+      });
+
+      return () => {
+        console.log("DIAG: Cleaning up trade logs listener.");
+        unsubscribe();
+      };
+    } else {
+      setTradeLogs([]);
+      setLoadingTradeLogs(false);
+      console.log("DIAG: Trade logs listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
+    }
+  }, [db, userId, firestoreModule]); // Dependencies for trade logs listener
 
 
   return (
@@ -373,8 +547,58 @@ function TradingDashboardContent() {
             {activeView === "dashboard" && (
               <div className="flex flex-col space-y-6">
                 <h2 className="text-2xl font-bold text-white mb-6">Market Overview</h2>
-                {/* Content placeholders */}
-                <p className="text-gray-400">Dashboard content will appear here.</p>
+                {loadingPrices && <p>Loading market prices...</p>}
+                {errorPrices && <p className="text-red-500">Error: {errorPrices}</p>}
+                {!loadingPrices && !errorPrices && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {Object.entries(marketPrices).map(([pair, data]) => (
+                      <div key={pair} className="bg-gray-800/50 rounded-lg p-4 shadow-lg border border-gray-700">
+                        <div className="flex items-center justify-between mb-2">
+                          <h3 className="text-lg font-semibold text-gray-300">{pair}</h3>
+                          {typeof data.percent_change === 'number' && data.percent_change >= 0 ? (
+                            <TrendingUp className="w-5 h-5 text-green-400" />
+                          ) : (
+                            <TrendingDown className="w-5 h-5 text-red-400" />
+                          )}
+                        </div>
+                        <div className="text-3xl font-bold text-white mb-1">
+                          ${typeof data.price === 'number' ? data.price.toFixed(2) : 'N/A'}
+                        </div>
+                        <div className={`text-sm ${typeof data.percent_change === 'number' && data.percent_change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {typeof data.percent_change === 'number' ? data.percent_change.toFixed(2) : 'N/A'}%
+                          <span className="text-gray-400 ml-1">Today</span>
+                        </div>
+                        <div className="text-xs text-gray-400 mt-2">
+                          RSI: {typeof data.rsi === 'number' ? data.rsi.toFixed(2) : "N/A"} | MACD: {typeof data.macd === 'number' ? data.macd.toFixed(2) : "N/A"}
+                        </div>
+                        <div className={`text-sm font-semibold mt-1 ${
+                            data.orscr_signal === "BUY" ? 'text-green-500' :
+                            data.orscr_signal === "SELL" ? 'text-red-500' : 'text-yellow-500'
+                        }`}>
+                            Signal: {data.orscr_signal || 'N/A'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Dashboard Trading Performance & Market Selection placeholders */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="bg-gray-800/50 rounded-lg p-6 shadow-lg border border-gray-700">
+                    <h3 className="text-xl font-semibold mb-4">Trading Performance (Placeholder)</h3>
+                    <p className="text-gray-400">Content for trading performance will go here.</p>
+                  </div>
+
+                  <div className="bg-gray-800/50 rounded-lg p-6 shadow-lg border border-gray-700">
+                    <h3 className="text-xl font-semibold mb-4">Recent Alerts (Placeholder)</h3>
+                    <p className="text-gray-400">Content for recent alerts will go here.</p>
+                  </div>
+                </div>
+
+                <div className="bg-gray-800/50 rounded-lg p-6 shadow-lg border border-gray-700">
+                  <h3 className="text-xl font-semibold mb-4">MARKET SELECTION (Placeholder)</h3>
+                  <p className="text-gray-400">Content for market selection will go here.</p>
+                </div>
               </div>
             )}
 
@@ -422,7 +646,32 @@ function TradingDashboardContent() {
                     <div className="flex-1 overflow-y-auto px-6 py-4 custom-scrollbar" style={{ paddingBottom: '88px' }}>
                       <div className="space-y-4">
                         {/* Chat messages will be rendered here */}
-                        <p className="text-gray-500 text-center">No messages yet. Start typing!</p>
+                        {chatMessages.map((msg) => (
+                          <div
+                            key={msg.id}
+                            className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
+                          >
+                            <div
+                              className={`max-w-[80%] p-3 rounded-xl ${
+                                msg.sender === "user"
+                                  ? "bg-purple-600 text-white"
+                                  : "bg-gray-700 text-gray-200"
+                              } break-words`}
+                            >
+                               {/* Only render text for now, full analysis/audio later */}
+                               <div className="prose prose-invert prose-p:my-1 prose-li:my-1 prose-li:leading-tight prose-ul:my-1 text-sm leading-relaxed">
+                                  <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+                                    {msg.text}
+                                  </ReactMarkdown>
+                                </div>
+                                {msg.timestamp && typeof msg.timestamp.toDate === 'function' && (
+                                    <p className="text-xs text-gray-400 mt-1 text-right">
+                                        {msg.timestamp.toDate().toLocaleString()}
+                                    </p>
+                                )}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                       <div ref={chatMessagesEndRef} />
                     </div>
@@ -531,8 +780,29 @@ function TradingDashboardContent() {
                     </button>
                   </div>
                   <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
-                    {/* Chat sessions will be rendered here */}
-                    <p className="text-gray-500 text-md text-center mt-4">No conversations yet.</p>
+                    {chatSessions.length > 0 ? (
+                      chatSessions.map((session) => (
+                        <div
+                          key={session.id}
+                          onClick={() => handleSwitchConversation(session.id)}
+                          className={`p-3 rounded-lg cursor-pointer transition duration-150 ease-in-out
+                            ${session.id === currentChatSessionId ? 'bg-indigo-700 text-white shadow-lg' : 'bg-gray-700 text-gray-200 hover:bg-gray-600'}`
+                          }
+                        >
+                          <p className="font-semibold text-lg truncate">{session.name || 'Untitled Chat'}</p>
+                          <p className="text-sm text-gray-400 truncate mt-1">
+                            {session.lastMessageText || 'No messages yet...'}
+                          </p>
+                          {session.createdAt && typeof session.createdAt.toDate === 'function' && (
+                            <p className="text-xs text-gray-500 mt-1">
+                              {session.createdAt.toDate().toLocaleDateString()}
+                            </p>
+                          )}
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-500 text-md text-center mt-4">No conversations yet.</p>
+                    )}
                   </div>
                   <div className="p-4 border-t border-gray-800 flex-shrink-0">
                     <button
@@ -699,8 +969,55 @@ function TradingDashboardContent() {
                         <span className="text-sm">Connected</span>
                       </div>
                     </div>
-                    {/* Live market data will be rendered here */}
-                    <p className="text-gray-400">Live market data will appear here.</p>
+
+                    {loadingPrices && <p>Loading live market data...</p>}
+                    {errorPrices && <p className="text-red-500">Error loading live data.</p>}
+                    {!loadingPrices && !errorPrices ? (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="text-center p-3 bg-gray-700/30 rounded-lg">
+                          <div className="text-sm text-gray-400">Current Price</div>
+                          <div className="text-lg font-bold text-white">
+                            ${currentLivePrice}
+                          </div>
+                        </div>
+                        <div className="text-center p-3 bg-gray-700/30 rounded-lg">
+                          <div className="text-sm text-gray-400">24h Change</div>
+                          {(() => {
+                              const percentChange = marketPrices[analysisCurrencyPair.replace('/', 'USDT')]?.percent_change;
+                              const isNumber = typeof percentChange === 'number';
+                              const textColor = isNumber && percentChange >= 0 ? 'text-emerald-400' : 'text-red-400';
+                              return (
+                                  <div className={`text-lg font-bold ${textColor}`}>
+                                      {isNumber ? `${percentChange.toFixed(2)}%` : 'N/A'}
+                                  </div>
+                              );
+                          })()}
+                        </div>
+                        <div className="text-center p-3 bg-gray-700/30 rounded-lg">
+                          <div className="text-sm text-gray-400">Volume</div>
+                          {(() => {
+                            const volume = marketPrices[analysisCurrencyPair.replace('/', 'USDT')]?.volume;
+                            const isVolumeNumber = typeof volume === 'number';
+                            return (
+                                <div className="text-lg font-bold text-blue-400">
+                                    {isVolumeNumber ? volume.toFixed(2) : 'N/A'}
+                                </div>
+                            );
+                          })()}
+                        </div>
+                        <div className="text-center p-3 bg-gray-700/30 rounded-lg">
+                          <div className="text-sm text-gray-400">Signal</div>
+                          <div className={`text-lg font-bold ${
+                              marketPrices[analysisCurrencyPair.replace('/', 'USDT')]?.orscr_signal === "BUY" ? 'text-green-500' :
+                              marketPrices[analysisCurrencyPair.replace('/', 'USDT')]?.orscr_signal === "SELL" ? 'text-red-500' : 'text-yellow-500'
+                          }`}>
+                              {marketPrices[analysisCurrencyPair.replace('/', 'USDT')]?.orscr_signal || 'N/A'}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-gray-400">Select a currency pair to see live data.</p>
+                    )}
                   </div>
 
                   <div className="bg-gray-800/40 rounded-xl shadow-lg border border-emerald-500/30 p-6">
@@ -733,8 +1050,71 @@ function TradingDashboardContent() {
                 {/* Trade Log Table */}
                 <div className="bg-gray-800/40 rounded-xl shadow-lg border border-cyan-500/30 p-6">
                   <h3 className="text-lg font-semibold text-cyan-300 mb-4">Your Trades</h3>
-                  {/* Trade log table */}
-                  <p className="text-gray-400">Trade log history will be here.</p>
+                  {loadingTradeLogs && <p className="text-gray-400">Loading trade history...</p>}
+                  {!loadingTradeLogs && tradeLogs.length === 0 && (
+                    <p className="text-gray-400">No trades logged yet. Add your first trade above!</p>
+                  )}
+                  {!loadingTradeLogs && tradeLogs.length > 0 && (
+                    <div className="overflow-x-auto custom-scrollbar">
+                      <table className="min-w-full divide-y divide-gray-700">
+                        <thead>
+                          <tr>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Date</th>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Pair</th>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Entry</th>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Exit</th>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Volume</th>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">P/L</th>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Journal</th>
+                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-800">
+                          {tradeLogs.map((trade) => (
+                            <tr key={trade.id} className="hover:bg-gray-700/50 transition-colors">
+                              <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">
+                                {trade.timestamp && typeof trade.timestamp.toDate === 'function' ? trade.timestamp.toDate().toLocaleDateString() : 'N/A'}
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-sm text-white">{trade.currencyPair}</td>
+                              <td className="px-4 py-3 whitespace-nowrap text-sm text-white">{trade.entryPrice.toFixed(2)}</td>
+                              <td className="px-4 py-3 whitespace-nowrap text-sm text-white">{trade.exitPrice.toFixed(2)}</td>
+                              <td className="px-4 py-3 whitespace-nowrap text-sm text-white">{trade.volume.toFixed(2)}</td>
+                              <td className={`px-4 py-3 whitespace-nowrap text-sm font-semibold ${trade.profitOrLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {trade.profitOrLoss.toFixed(2)}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-400 max-w-xs truncate cursor-pointer"
+                                  title={trade.journalEntry || "No journal entry. Click to add/edit."}
+                                  onClick={() => {
+                                    setSelectedTradeForJournal(trade.id);
+                                    setJournalEntry(trade.journalEntry || '');
+                                  }}>
+                                {trade.journalEntry ? trade.journalEntry : "Add Entry"}
+                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+                                <button
+                                  onClick={() => {
+                                    setSelectedTradeForJournal(trade.id);
+                                    setJournalEntry(trade.journalEntry || '');
+                                  }}
+                                  className="text-indigo-400 hover:text-indigo-500 mr-3"
+                                  title="Edit Journal"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteTradeLog(trade.id)}
+                                  className="text-red-400 hover:text-red-500"
+                                  title="Delete Trade"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
 
                 {/* Journal Entry Editor */}

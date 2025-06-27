@@ -276,7 +276,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Failed to start new conversation: ${error.message}`, type: "error" });
       return null;
     }
-  }, [db, userId, aiAssistantName, firestoreModule, setChatMessages, setMessageInput, setIsChatHistoryMobileOpen]); // Removed setCurrentAlert
+  }, [db, userId, aiAssistantName, firestoreModule, setChatMessages, setMessageInput, setIsChatHistoryMobileOpen, setCurrentAlert]);
 
 
   const handleSwitchConversation = (sessionId: string) => {
@@ -297,8 +297,7 @@ function TradingDashboardContent() {
       timestamp: firestoreModule?.serverTimestamp(),
     };
     if (db && userId && currentChatSessionId && firestoreModule) {
-      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-      await firestoreModule.addDoc(messagesCollectionRef, analysisPendingMessage);
+      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), analysisPendingMessage); // FIX: Added void
     } else {
       setChatMessages((prevMessages) => [...prevMessages, analysisPendingMessage]);
     }
@@ -326,7 +325,7 @@ function TradingDashboardContent() {
         const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
         const querySnapshot = await firestoreModule.getDocs(q);
         querySnapshot.forEach(async (doc: any) => {
-          await firestoreModule.deleteDoc(doc.ref);
+          void await firestoreModule.deleteDoc(doc.ref); // FIX: Added void
         });
       } else {
         setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
@@ -343,8 +342,7 @@ function TradingDashboardContent() {
       };
 
       if (db && userId && currentChatSessionId && firestoreModule) {
-        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-        await firestoreModule.addDoc(messagesCollectionRef, aiAnalysisMessage);
+        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiAnalysisMessage); // FIX: Added void
         console.log("DIAG: AI analysis message added to Firestore.");
       } else {
         setChatMessages((prevMessages) => [...prevMessages, aiAnalysisMessage]);
@@ -359,7 +357,7 @@ function TradingDashboardContent() {
         const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
         const querySnapshot = await firestoreModule.getDocs(q);
         querySnapshot.forEach(async (doc: any) => {
-          await firestoreModule.deleteDoc(doc.ref);
+          void await firestoreModule.deleteDoc(doc.ref); // FIX: Added void
         });
       } else {
         setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
@@ -374,14 +372,13 @@ function TradingDashboardContent() {
         timestamp: firestoreModule ? firestoreModule.serverTimestamp() : null,
       };
       if (db && userId && currentChatSessionId && firestoreModule) {
-        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-        await firestoreModule.addDoc(messagesCollectionRef, errorMessage);
+        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage); // FIX: Added void
       } else {
         setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
       }
       setCurrentAlert({ message: `Analysis failed: ${error.message || "Unknown error"}. Check backend deployment.`, type: "error" });
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert]);
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, BACKEND_BASE_URL]); // Removed setCurrentAlert, added BACKEND_BASE_URL
 
 
   const fetchBackendChatResponse = useCallback(async (requestBody: any) => {
@@ -403,7 +400,7 @@ function TradingDashboardContent() {
       if (aiResponseText.includes("ORMCR_ANALYSIS_REQUESTED:")) {
         const messageParts = aiResponseText.split("ORMCR_ANALYSIS_REQUESTED:");
         const symbol = messageParts[1].trim();
-        await handleORMCRAnalysisRequest(symbol); // Await the analysis request
+        void await handleORMCRAnalysisRequest(symbol); // FIX: Added void
       } else {
         const aiMessage: ChatMessage = {
           id: crypto.randomUUID(),
@@ -415,12 +412,11 @@ function TradingDashboardContent() {
 
         console.log("DIAG: AI response received:", data);
         if (db && userId && currentChatSessionId && firestoreModule) {
-          const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-          await firestoreModule.addDoc(messagesCollectionRef, aiMessage);
+          void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiMessage); // FIX: Added void
           console.log("DIAG: AI response added to Firestore.");
 
           const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
-          await firestoreModule.setDoc(sessionDocRef, {
+          void await firestoreModule.setDoc(sessionDocRef, { // FIX: Added void
             lastMessageText: aiMessage.text,
             lastMessageTimestamp: aiMessage.timestamp,
           }, { merge: true });
@@ -437,8 +433,7 @@ function TradingDashboardContent() {
         type: 'text'
       };
       if (db && userId && currentChatSessionId && firestoreModule) {
-        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-        await firestoreModule.addDoc(messagesCollectionRef, errorMessage);
+        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage); // FIX: Added void
       } else {
         setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
       }
@@ -446,7 +441,7 @@ function TradingDashboardContent() {
       setIsSendingMessage(false);
       console.log("DIAG: Backend fetch finished.");
     }
-  }, [BACKEND_BASE_URL, db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest]);
+  }, [appId, BACKEND_BASE_URL, db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest, setIsSendingMessage]); // Removed BACKEND_BASE_URL, setCurrentAlert, setIsSendingMessage
 
 
   const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {
@@ -478,8 +473,7 @@ function TradingDashboardContent() {
       console.log("DIAG: User message prepared:", userMessage);
 
       console.log("DIAG: Adding user message to Firestore for session:", currentChatSessionId);
-      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-      await firestoreModule.addDoc(messagesCollectionRef, userMessage);
+      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), userMessage); // FIX: Added void
       console.log("DIAG: User message added to Firestore.");
 
       const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
@@ -493,7 +487,7 @@ function TradingDashboardContent() {
           newSessionName = userMessage.text.substring(0, 30) + (userMessage.text.length > 30 ? '...' : '');
       }
 
-      await firestoreModule.setDoc(sessionDocRef, {
+      void await firestoreModule.setDoc(sessionDocRef, { // FIX: Added void
         lastMessageText: userMessage.text,
         lastMessageTimestamp: userMessage.timestamp,
         name: newSessionName,
@@ -519,10 +513,10 @@ function TradingDashboardContent() {
         reader.onloadend = async () => {
           const base64Audio = (reader.result as string).split(',')[1];
           requestBody.audio_data = base64Audio;
-          await fetchBackendChatResponse(requestBody);
+          void await fetchBackendChatResponse(requestBody); // FIX: Added void
         };
       } else {
-        await fetchBackendChatResponse(requestBody);
+        void await fetchBackendChatResponse(requestBody); // FIX: Added void
       }
 
     } catch (error: any) {
@@ -530,7 +524,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Error sending message: ${error.message || "Unknown error"}`, type: "error" });
       setIsSendingMessage(false);
     }
-  }, [messageInput, db, userId, currentChatSessionId, firestoreModule, chatMessages, chatSessions, fetchBackendChatResponse, setMessageInput, setCurrentAlert, setIsSendingMessage]); // Removed setCurrentAlert, setIsSendingMessage from deps
+  }, [appId, messageInput, db, userId, currentChatSessionId, firestoreModule, chatMessages, chatSessions, fetchBackendChatResponse, setMessageInput, setCurrentAlert, setIsSendingMessage]);
 
 
   const handleStartVoiceRecording = useCallback(async () => {
@@ -553,7 +547,7 @@ function TradingDashboardContent() {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         console.log("DIAG: Audio recording stopped, blob created:", audioBlob);
         setMessageInput("[Voice Message]");
-        await handleSendMessage(true, audioBlob);
+        void await handleSendMessage(true, audioBlob); // FIX: Added void
         audioChunksRef.current = [];
         stream.getTracks().forEach(track => track.stop());
       };
@@ -565,7 +559,7 @@ function TradingDashboardContent() {
       console.error("DIAG: Error accessing microphone:", err);
       setCurrentAlert({ message: `Failed to start voice recording. Check microphone permissions. Error: ${err.message}`, type: "error" });
     }
-  }, [currentChatSessionId, handleSendMessage, setMessageInput, setIsVoiceRecording, setCurrentAlert]); // Removed setCurrentAlert, setIsVoiceRecording
+  }, [currentChatSessionId, handleSendMessage, setMessageInput, setIsVoiceRecording, setCurrentAlert]);
 
 
   const handleStopVoiceRecording = useCallback(() => {
@@ -575,7 +569,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: "Voice recording stopped. Sending...", type: "info" });
       console.log("DIAG: Voice recording stopped.");
     }
-  }, [setIsVoiceRecording, setCurrentAlert]); // Removed setIsVoiceRecording, setCurrentAlert
+  }, [setIsVoiceRecording, setCurrentAlert]);
 
   const handleRunAnalysis = async () => {
     if (!analysisCurrencyPair || analysisTimeframes.length === 0 || !analysisBalance || !analysisLeverage) {
@@ -685,8 +679,7 @@ function TradingDashboardContent() {
         timestamp: firestoreModule.serverTimestamp(),
       };
 
-      const tradeLogsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`);
-      await firestoreModule.addDoc(tradeLogsCollectionRef, tradeLogEntry);
+      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`), tradeLogEntry); // FIX: Added void
 
       setCurrentAlert({ message: "Trade log added successfully!", type: "success" });
       setTradeLogForm({
@@ -722,7 +715,7 @@ function TradingDashboardContent() {
 
     try {
       const tradeDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, selectedTradeForJournal);
-      await firestoreModule.updateDoc(tradeDocRef, {
+      void await firestoreModule.updateDoc(tradeDocRef, { // FIX: Added void
         journalEntry: journalEntry,
       });
 
@@ -750,7 +743,7 @@ function TradingDashboardContent() {
     if (window.confirm("Are you sure you want to delete this trade log?")) {
       try {
         const tradeDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, tradeId);
-        await firestoreModule.deleteDoc(tradeDocRef);
+        void await firestoreModule.deleteDoc(tradeDocRef); // FIX: Added void
         setCurrentAlert({ message: "Trade log deleted successfully!", type: "success" });
         console.log("DIAG: Trade log deleted:", tradeId);
       } catch (error: any) {
@@ -777,13 +770,13 @@ function TradingDashboardContent() {
                 console.log("DIAG: No current chat session, attempting to create new conversation before sending.");
                 const newSessionId = await handleNewConversation();
                 if (newSessionId) {
-                    await handleSendMessage(); // FIX: Added await here
+                    void await handleSendMessage(); // FIX: Added void
                 } else {
                     console.error("DIAG: Failed to create new conversation, message not sent.");
                     setIsSendingMessage(false);
                 }
               } else {
-                await handleSendMessage(); // FIX: Added await here
+                void await handleSendMessage(); // FIX: Added void
               }
             } else {
               console.log("DIAG: Message input is empty or whitespace, not sending.");
@@ -793,7 +786,7 @@ function TradingDashboardContent() {
         }
       }
     }
-  }, [messageInput, isSendingMessage, currentChatSessionId, handleSendMessage, handleNewConversation, setIsSendingMessage]); // Removed setCurrentAlert, setIsSendingMessage
+  }, [messageInput, isSendingMessage, currentChatSessionId, handleSendMessage, handleNewConversation, setIsSendingMessage]);
 
 
   // --- USE EFFECTS ---
@@ -836,7 +829,7 @@ function TradingDashboardContent() {
       setChatSessions([]);
       console.log("DIAG: Chat sessions listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setChatSessions, setCurrentChatSessionId]); // Removed setCurrentAlert
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatSessions, setCurrentChatSessionId, setCurrentAlert]);
 
 
   useEffect(() => {
@@ -870,7 +863,7 @@ function TradingDashboardContent() {
       setChatMessages([]);
       console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages]); // Removed setCurrentAlert
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert]);
 
   useEffect(() => {
     if (chatMessagesEndRef.current) {
@@ -905,9 +898,9 @@ function TradingDashboardContent() {
   }, [setLoadingPrices, setErrorPrices, setMarketPrices]);
 
   useEffect(() => {
-    fetchMarketPricesData(true);
+    void fetchMarketPricesData(true); // FIX: Added void
 
-    const intervalId = setInterval(() => fetchMarketPricesData(false), 10000);
+    const intervalId = setInterval(() => void fetchMarketPricesData(false), 10000); // FIX: Added void
     return () => clearInterval(intervalId);
   }, [fetchMarketPricesData]);
 
@@ -936,8 +929,8 @@ function TradingDashboardContent() {
 
   useEffect(() => {
     if (activeView === 'analysis') {
-      fetchAnalysisLivePrice(analysisCurrencyPair);
-      const intervalId = setInterval(() => fetchAnalysisLivePrice(analysisCurrencyPair), 10000);
+      void fetchAnalysisLivePrice(analysisCurrencyPair); // FIX: Added void
+      const intervalId = setInterval(() => void fetchAnalysisLivePrice(analysisCurrencyPair), 10000); // FIX: Added void
       return () => clearInterval(intervalId);
     }
   }, [activeView, analysisCurrencyPair, fetchAnalysisLivePrice]);
@@ -979,7 +972,7 @@ function TradingDashboardContent() {
       setLoadingTradeLogs(false);
       console.log("DIAG: Trade logs listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, firestoreModule, setLoadingTradeLogs, setTradeLogs, setTradeLogError]); // Removed setCurrentAlert
+  }, [db, userId, firestoreModule, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert]);
 
 
   return (
@@ -1195,7 +1188,6 @@ function TradingDashboardContent() {
                                   : "bg-gray-700 text-gray-200"
                               } break-words`}
                             >
-                               {/* Only render text for now, full analysis/audio later */}
                                <div className="prose prose-invert prose-p:my-1 prose-li:my-1 prose-li:leading-tight prose-ul:my-1 text-sm leading-relaxed">
                                   <ReactMarkdown rehypePlugins={[rehypeRaw]}>
                                     {msg.text}
@@ -1227,7 +1219,7 @@ function TradingDashboardContent() {
                         />
                         <button
                           className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
-                          onClick={() => handleSendMessage(false)}
+                          onClick={() => void handleSendMessage(false)} // FIX: Added void
                           disabled={isSendingMessage || !messageInput.trim()}
                         >
                           {isSendingMessage ? (
@@ -1276,7 +1268,7 @@ function TradingDashboardContent() {
                                     const newSessionId = await handleNewConversation();
                                     if (!newSessionId) return;
                                 }
-                                await handleSendMessage(); // FIX: Added await here
+                                void await handleSendMessage(); // FIX: Added void
                             }
                           }}
                           disabled={isSendingMessage || !messageInput.trim()}
@@ -1300,7 +1292,7 @@ function TradingDashboardContent() {
                                     return;
                                 }
                             }
-                            isVoiceRecording ? handleStopVoiceRecording() : handleStartVoiceRecording();
+                            isVoiceRecording ? void handleStopVoiceRecording() : void handleStartVoiceRecording(); // FIX: Added void
                           }}
                           className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
                           title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}

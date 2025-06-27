@@ -5,11 +5,8 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, User as FirebaseAuthUser, Auth } from 'firebase/auth';
 import { Firestore, getFirestore } from 'firebase/firestore'; // Import Firestore type here
 
-// Declare global variables that are injected by the Canvas environment or Vercel build process.
-// This tells TypeScript they exist, preventing 'Cannot find name' errors during compilation.
-declare const __firebase_config: string;
-declare const __initial_auth_token: string;
-
+// IMPORTANT: In Next.js, client-side environment variables must be prefixed with NEXT_PUBLIC_
+// These will be replaced at build time with their actual values from Vercel.
 
 // Define the shape of the Firebase context
 interface FirebaseContextType {
@@ -37,12 +34,29 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({ children }) 
     let app;
     // Check if Firebase app is already initialized
     if (!getApps().length) {
-      // Safely parse __firebase_config, which is declared as a global const.
-      // It's expected to be provided by the environment (Canvas or Vercel build).
-      const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-      app = initializeApp(firebaseConfig);
+      // Reconstruct firebaseConfig using NEXT_PUBLIC_ environment variables
+      const firebaseConfig = {
+        apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+        authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+        projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+        storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+        messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+        appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+        measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID, // Optional
+      };
+
+      // Basic validation for critical config
+      if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
+        console.error("DIAG: Firebase config missing critical properties:", firebaseConfig);
+        setIsAuthReady(true); // Mark as ready to avoid infinite loading, but with error
+        return;
+      }
+
+      app = initializeApp(firebaseConfig as any); // Cast to any to bypass TS type strictness for partial config
+      console.log("DIAG: Firebase app initialized via NEXT_PUBLIC_ env vars.");
     } else {
       app = getApp();
+      console.log("DIAG: Firebase app already initialized.");
     }
 
     const firestoreInstance = getFirestore(app);
@@ -56,31 +70,37 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({ children }) 
       if (user) {
         setUserId(user.uid);
         setIsAuthReady(true);
+        console.log("DIAG: Auth state changed: User is logged in with UID:", user.uid);
       } else {
-        // If no user, try to sign in anonymously using __initial_auth_token
-        // This ensures a userId is always available for Firestore rules.
-        // Safely check and use __initial_auth_token, which is declared as a global const.
+        // If no user, try to sign in anonymously or with custom token from env
         try {
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(authInstance, __initial_auth_token);
-            setUserId(authInstance.currentUser?.uid || crypto.randomUUID()); // Ensure userId is set after token sign-in
-            console.log("DIAG: Signed in with custom token.");
+          const initialAuthToken = process.env.NEXT_PUBLIC_INITIAL_AUTH_TOKEN;
+
+          if (initialAuthToken) {
+            await signInWithCustomToken(authInstance, initialAuthToken);
+            console.log("DIAG: Signed in with NEXT_PUBLIC_INITIAL_AUTH_TOKEN.");
           } else {
+            // This is the default path for initial anonymous users
             await signInAnonymously(authInstance);
-            setUserId(authInstance.currentUser?.uid || crypto.randomUUID()); // Fallback to anonymous if token not available
-            console.log("DIAG: Signed in anonymously (no initial token).");
+            console.log("DIAG: Signed in anonymously (no initial token provided).");
           }
+          setUserId(authInstance.currentUser?.uid || crypto.randomUUID());
         } catch (error) {
           console.error("DIAG: Error during anonymous/custom token sign-in:", error);
-          setUserId(crypto.randomUUID()); // Ensure a userId is always present even on sign-in error
+          // Fallback to a random UUID if authentication fails, to allow app to proceed somewhat
+          setUserId(crypto.randomUUID());
         } finally {
-          setIsAuthReady(true); // Mark auth as ready even if sign-in failed
+          setIsAuthReady(true); // Mark auth as ready regardless of success to allow UI to render
+          console.log("DIAG: Firebase Auth readiness set to true.");
         }
       }
     });
 
     // Cleanup subscription on unmount
-    return () => unsubscribe();
+    return () => {
+      console.log("DIAG: Cleaning up Firebase auth listener.");
+      unsubscribe();
+    };
   }, []); // Empty dependency array means this runs once on mount
 
   // Provide the Firebase instances and userId to children

@@ -1,14 +1,801 @@
 "use client"
 
-import React from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react"
+// Import ALL necessary Lucide-React icons
+import {
+  Home,
+  MessageCircle,
+  Menu,
+  X,
+  TrendingUp,
+  Bell,
+  Bot,
+  User,
+  Send,
+  Plus,
+  History,
+  SquarePen,
+  Mic,
+  Volume2,
+  TrendingDown,
+  DollarSign,
+  BarChart3,
+  Play,
+  Save,
+  FileText,
+  Settings,
+  Trash2,
+  Edit2
+} from "lucide-react"
 
-// This is a barebones page.tsx to test if Vercel can deploy a minimal Next.js app.
-// If this deploys successfully, we will gradually add back your application's logic.
+// Import React Markdown and rehype-raw
+import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
 
-export default function Home() {
+
+// Import the new FirebaseProvider and useFirebase hook
+import { FirebaseProvider, useFirebase } from '@/components/FirebaseProvider';
+
+// --- START: Backend URL ---
+const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL || "http://127.0.0.1:10000";
+console.log("DIAG: Initial BACKEND_BASE_URL (from env or fallback):", BACKEND_BASE_URL);
+// --- END: Backend URL ---
+
+// Global variables for Firebase configuration (using process.env for Vercel deployment)
+const appId = process.env.NEXT_PUBLIC_APP_ID || 'default-app-id';
+console.log("DIAG: Initial appId (from environment or fallback):", appId);
+
+
+// Define interfaces for the expected API response structure
+interface PriceDetail {
+  price: string;
+  percentage_change: string;
+}
+
+interface AnalysisResult {
+  confidence_score: string;
+  signal_strength: string;
+  market_summary: string;
+  stop_loss: PriceDetail;
+  take_profit_1: PriceDetail;
+  take_profit_2: PriceDetail;
+  technical_indicators_analysis: string;
+  next_step_for_user: string;
+  ormcr_confirmation_status: string;
+  ormcr_overall_bias: string;
+  ormcr_reason: string;
+  // Added fields to match backend analysis response
+  symbol: string;
+  // This is the ONLY correct and active 'ai_suggestion' definition.
+  ai_suggestion: {
+    entry_type: string;
+    recommended_action: string;
+    position_size: string;
+    entry_price: string; // Added from backend response
+    direction: string; // Added from backend response
+    confidence: string; // Added from backend response
+    signal: string; // Added from backend response
+  };
+}
+
+// Market Data (for Dashboard and Analysis Live Price)
+interface MarketData {
+  price: number | string;
+  percent_change: number | string;
+  rsi: number | string;
+  macd: number | string;
+  stoch_k: number | string;
+  volume: number | string;
+  orscr_signal: string;
+}
+
+interface AllMarketPrices {
+  [key: string]: MarketData;
+}
+
+// Interface for a chat session
+interface ChatSession {
+  id: string;
+  name: string;
+  createdAt: any;
+  lastMessageText: string;
+  lastMessageTimestamp?: any;
+}
+
+// Interfaces for Trade Log
+interface TradeLogEntry {
+  id: string;
+  currencyPair: string;
+  entryPrice: number;
+  exitPrice: number;
+  volume: number;
+  profitOrLoss: number;
+  timestamp: any;
+  journalEntry?: string;
+}
+
+// Chat message interface updated to include 'type' and 'audioUrl' and 'analysis'
+interface ChatMessage {
+  id: string;
+  sender: 'user' | 'ai';
+  text: string;
+  timestamp?: any;
+  type?: 'text' | 'audio' | 'analysis'; // Added 'audio' and 'analysis' type
+  audioUrl?: string; // For local playback of recorded audio
+  analysis?: AnalysisResult; // For storing full analysis object in message
+}
+
+// Custom Alert/Message component (only its definition, no usage yet)
+const CustomAlert: React.FC<{ message: string; type: 'success' | 'error' | 'warning' | 'info'; onClose: () => void }> = ({ message, type, onClose }) => {
+  const bgColor = {
+    'success': 'bg-emerald-600',
+    'error': 'bg-red-600',
+    'warning': 'bg-amber-600',
+    'info': 'bg-blue-600'
+  }[type];
+
+  // Placeholder useEffect, actual functionality will be added later
+  useEffect(() => {
+    const timer = setTimeout(onClose, 5000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
   return (
-    <div className="flex h-screen items-center justify-center bg-gray-900 text-white">
-      <h1 className="text-4xl font-bold">Aura Trading Bot - Basic Test Page</h1>
+    <div className={`fixed top-4 right-4 z-50 ${bgColor} text-white px-4 py-3 rounded-lg shadow-lg transform transition-transform duration-300 translate-x-0`}>
+      <div className="flex items-center justify-between">
+        <span>{message}</span>
+        <button onClick={onClose} className="ml-3 text-white/70 hover:text-white">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   );
+};
+
+
+// !!! THIS IS THE MAIN EXPORT FOR YOUR PAGE !!!
+export default function TradingDashboardWrapper() {
+  return (
+    <FirebaseProvider>
+      <TradingDashboardContent />
+    </FirebaseProvider>
+  );
+}
+
+
+function TradingDashboardContent() {
+  // Use Firebase hook to get database, user ID, and readiness states
+  // We're keeping minimal dependencies here for now
+  const { db, userId, firestoreModule } = useFirebase();
+
+  // --- STATE VARIABLES ---
+  const [activeView, setActiveView] = useState("dashboard")
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [currentAlert, setCurrentAlert] = useState<{ message: string; type: 'success' | 'error' | 'warning' | 'info' } | null>(null);
+  const [isChatHistoryMobileOpen, setIsChatHistoryMobileOpen] = useState(false);
+
+  // Market Data states
+  const [marketPrices, setMarketPrices] = useState<AllMarketPrices>({})
+  const [loadingPrices, setLoadingPrices] = useState(true)
+  const [errorPrices, setErrorPrices] = useState<string | null>(null)
+  const [currentLivePrice, setCurrentLivePrice] = useState<string>('N/A');
+
+  // Chat states
+  const [messageInput, setMessageInput] = useState("")
+  const [isSendingMessage, setIsSendingMessage] = useState(false)
+  const chatMessagesEndRef = useRef<HTMLDivElement>(null)
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [currentChatSessionId, setCurrentChatSessionId] = useState<string | null>(null);
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  const [aiAssistantName] = useState("Aura");
+
+
+  // Analysis Page Inputs and Results
+  const [analysisCurrencyPair, setAnalysisCurrencyPair] = useState("BTC/USD")
+  const [analysisTimeframes, setAnalysisTimeframes] = useState<string[]>([])
+  const [analysisTradeType, setAnalysisTradeType] = useState("Scalp (Quick trades)")
+  const [analysisIndicators, setAnalysisIndicators] = useState<string[]>([
+    "RSI", "MACD", "Moving Averages", "Bollinger Bands", "Stochastic Oscillator", "Volume", "ATR", "Fibonacci Retracements"
+  ])
+  const [analysisBalance, setAnalysisBalance] = useState("10000")
+  const [analysisLeverage, setAnalysisLeverage] = useState("1x (No Leverage)")
+  const [analysisResults, setAnalysisResults] = useState<AnalysisResult | null>(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
+
+  const availableTimeframes = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+  const availableIndicators = [
+    { name: "RSI", desc: "Relative Sth Index" },
+    { name: "Stochastic Oscillator", desc: "Momentum oscillator" },
+    { name: "MACD", desc: "Moving Average Convergence" },
+    { name: "Moving Averages", desc: "SMA/EMA trends" },
+    { name: "Bollinger Bands", desc: "Volatility bands" },
+    { name: "Volume", desc: "Trading volume analysis" },
+    { name: "ATR", desc: "Average True Range" },
+    { name: "Fibonacci Retracements", desc: "Key structural levels" },
+  ]
+
+  // Trade Log states
+  const [tradeLogs, setTradeLogs] = useState<TradeLogEntry[]>([])
+  const [loadingTradeLogs, setLoadingTradeLogs] = useState(true)
+  const [tradeLogForm, setTradeLogForm] = useState({
+    currencyPair: "BTC/USD",
+    entryPrice: "",
+    exitPrice: "",
+    volume: "",
+    profitOrLoss: "",
+  })
+  const [isAddingTrade, setIsAddingTrade] = useState(false)
+  const [journalEntry, setJournalEntry] = useState("")
+  const [selectedTradeForJournal, setSelectedTradeForJournal] = useState<string | null>(null)
+  const [isSavingJournal, setIsSavingJournal] = useState(false)
+  const [tradeLogError, setTradeLogError] = useState<string | null>(null);
+
+  // Settings states
+  const [backendUrlSetting] = useState(BACKEND_BASE_URL);
+  const [appIdSetting] = useState(appId);
+
+
+  // --- HANDLERS (Empty for now, will be added incrementally) ---
+  const handleNewConversation = useCallback(async () => { /* Logic here later */ return null; }, []);
+  const handleSwitchConversation = (sessionId: string) => {};
+  const handleORMCRAnalysisRequest = useCallback(async (symbol: string) => {}, []);
+  const fetchBackendChatResponse = useCallback(async (requestBody: any) => {}, []);
+  const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {}, []);
+  const handleStartVoiceRecording = useCallback(async () => {}, []);
+  const handleStopVoiceRecording = useCallback(() => {}, []);
+  const handleRunAnalysis = async () => {};
+  const handleIndicatorChange = (indicatorName: string) => {};
+  const handleTimeframeButtonClick = (tf: string) => {};
+  const handleChatAboutAnalysis = () => {};
+  const handleAddTradeLog = async () => {};
+  const handleSaveJournalEntry = async () => {};
+  const handleDeleteTradeLog = async (tradeId: string) => {};
+  const handleChatInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {}, []);
+
+
+  // --- USE EFFECTS (Empty for now, will be added incrementally) ---
+  useEffect(() => { /* Chat sessions listener here later */ }, []);
+  useEffect(() => { /* Chat messages listener here later */ }, []);
+  useEffect(() => { /* Scroll to end of chat messages here later */ }, []);
+  const fetchMarketPricesData = useCallback(async (initialLoad = false) => {}, []);
+  useEffect(() => { /* Market data fetching interval here later */ }, []);
+  const fetchAnalysisLivePrice = useCallback(async (pair: string) => {}, []);
+  useEffect(() => { /* Analysis live price fetching interval here later */ }, []);
+  useEffect(() => { /* Trade logs listener here later */ }, []);
+
+
+  return (
+    <div className="flex h-screen bg-gray-900 text-white">
+      {/* Sidebar */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-gray-800 bg-gray-900 transition-transform md:translate-x-0 ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="flex h-16 shrink-0 items-center justify-between px-6">
+          <div className="flex items-center space-x-2">
+            <Bot className="h-6 w-6 text-purple-400" />
+            <span className="text-xl font-semibold">Aura Bot</span>
+          </div>
+          <button className="md:hidden" onClick={() => setSidebarOpen(false)}>
+            <X className="h-6 w-6" />
+          </button>
+        </div>
+        <nav className="flex-1 space-y-1 px-4 py-4">
+          <a
+            className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              activeView === "dashboard"
+                ? "bg-gray-800 text-purple-400"
+                : "text-gray-400 hover:bg-gray-800 hover:text-white"
+            }`}
+            href="#"
+            onClick={() => { setActiveView("dashboard"); setSidebarOpen(false); }}
+          >
+            <Home className="h-5 w-5" />
+            Dashboard
+          </a>
+          <a
+            className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              activeView === "chat"
+                ? "bg-gray-800 text-purple-400"
+                : "text-gray-400 hover:bg-gray-800 hover:text-white"
+            }`}
+            href="#"
+            onClick={() => { setActiveView("chat"); setSidebarOpen(false); }}
+          >
+            <MessageCircle className="h-5 w-5" />
+            Aura Chat
+          </a>
+          <a
+            className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              activeView === "analysis"
+                ? "bg-gray-800 text-purple-400"
+                : "text-gray-400 hover:bg-gray-800 hover:text-white"
+            }`}
+            href="#"
+            onClick={() => { setActiveView("analysis"); setSidebarOpen(false); }}
+          >
+            <BarChart3 className="h-5 w-5" />
+            Analysis
+          </a>
+          <a
+            className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              activeView === "trade-log"
+                ? "bg-gray-800 text-purple-400"
+                : "text-gray-400 hover:bg-gray-800 hover:text-white"
+            }`}
+            href="#"
+            onClick={() => { setActiveView("trade-log"); setSidebarOpen(false); }}
+          >
+            <FileText className="h-5 w-5" />
+            Trade Log
+          </a>
+          <a
+            className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              activeView === "settings"
+                ? "bg-gray-800 text-purple-400"
+                : "text-gray-400 hover:bg-gray-800 hover:text-white"
+            }`}
+            href="#"
+            onClick={() => { setActiveView("settings"); setSidebarOpen(false); }}
+          >
+            <Settings className="h-5 w-5" />
+            Settings
+          </a>
+        </nav>
+      </aside>
+
+      {/* Main content area */}
+      <div className="flex flex-1 flex-col md:pl-64">
+        <header className="sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between border-b border-gray-800 bg-gray-900 px-6">
+          <button className="md:hidden" onClick={() => setSidebarOpen(true)}>
+            <Menu className="h-6 w-6" />
+          </button>
+          <h1 className="text-xl font-semibold">Aura Trading Dashboard</h1>
+          <div className="ml-auto flex items-center space-x-4">
+            <Bell className="h-6 w-6 text-gray-400" />
+            <span className="text-sm text-gray-400 mr-2">User ID: {userId ? `${userId.substring(0, 8)}...` : 'Loading User...'}</span>
+            <User className="h-6 w-6 text-gray-400" />
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-auto">
+          <main className="flex-1 p-6">
+            {/* CustomAlert will be displayed here once currentAlert state is set */}
+            {currentAlert && <CustomAlert message={currentAlert.message} type={currentAlert.type} onClose={() => setCurrentAlert(null)} />}
+
+            {/* Dashboard View (Market Overview) */}
+            {activeView === "dashboard" && (
+              <div className="flex flex-col space-y-6">
+                <h2 className="text-2xl font-bold text-white mb-6">Market Overview</h2>
+                {/* Content placeholders */}
+                <p className="text-gray-400">Dashboard content will appear here.</p>
+              </div>
+            )}
+
+            {/* Chat View */}
+            {activeView === "chat" && (
+              <div className="flex flex-col md:flex-row h-full bg-gray-900 rounded-lg shadow-xl overflow-hidden relative">
+                <div className="flex items-center justify-between p-4 md:px-6 md:py-4 border-b border-gray-800 flex-shrink-0">
+                  <button
+                      className="md:hidden text-gray-400 hover:text-white"
+                      onClick={() => {
+                        if (currentChatSessionId) {
+                            setCurrentChatSessionId(null);
+                            setChatMessages([]);
+                        }
+                      }}
+                  >
+                      {currentChatSessionId ? <X className="h-6 w-6" /> : null}
+                  </button>
+
+                  <div className="flex-1 text-center font-semibold text-lg text-gray-300">
+                    Aura Bot {userId ? `(${userId.substring(0, 8)}...)` : ''}
+                  </div>
+
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={handleNewConversation}
+                      className="p-2 rounded-full bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center transition-all duration-200"
+                      title="New Chat"
+                    >
+                      <SquarePen className="h-5 w-5" />
+                    </button>
+                    <button
+                      onClick={() => setIsChatHistoryMobileOpen(true)}
+                      className="p-2 rounded-full bg-gray-700 hover:bg-gray-600 text-gray-300 flex items-center justify-center transition-all duration-200"
+                      title="View History"
+                    >
+                      <History className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Main Chat Content Area */}
+                {currentChatSessionId ? (
+                  <div className="flex-1 flex flex-col relative overflow-hidden">
+                    <div className="flex-1 overflow-y-auto px-6 py-4 custom-scrollbar" style={{ paddingBottom: '88px' }}>
+                      <div className="space-y-4">
+                        {/* Chat messages will be rendered here */}
+                        <p className="text-gray-500 text-center">No messages yet. Start typing!</p>
+                      </div>
+                      <div ref={chatMessagesEndRef} />
+                    </div>
+
+                    {/* Input area (fixed at bottom) */}
+                    <div className="absolute bottom-0 left-0 right-0 p-4 bg-gray-900 border-t border-gray-800 z-10">
+                      <div className="relative flex items-center w-full bg-gray-800 rounded-lg border border-gray-700 pr-2">
+                        <textarea
+                          placeholder="Ask anything (Shift + Enter for new line)"
+                          className="flex-1 bg-transparent text-white rounded-lg px-4 py-3 focus:outline-none resize-y min-h-[40px] max-h-[120px] custom-scrollbar"
+                          value={messageInput}
+                          onChange={(e) => setMessageInput(e.target.value)}
+                          onKeyDown={handleChatInputKeyDown}
+                          rows={Math.min(5, (messageInput.split('\n').length || 1))}
+                          disabled={isSendingMessage}
+                        />
+                        <button
+                          className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
+                          onClick={() => handleSendMessage(false)}
+                          disabled={isSendingMessage || !messageInput.trim()}
+                        >
+                          {isSendingMessage ? (
+                            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          ) : (
+                            <Send className="h-5 w-5" />
+                          )}
+                        </button>
+                        <button
+                          onClick={isVoiceRecording ? handleStopVoiceRecording : handleStartVoiceRecording}
+                          className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+                          title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}
+                          disabled={isSendingMessage || !currentChatSessionId}
+                        >
+                          {isVoiceRecording ? <Volume2 className="h-5 w-5 text-white animate-pulse" /> : <Mic className="h-5 w-5 text-white" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  // Empty State (Grok-like initial screen)
+                  <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-4 pb-20">
+                    <Bot className="h-24 w-24 text-purple-400 mb-4 animate-bounce-slow" />
+                    <h2 className="text-4xl md:text-5xl font-extrabold text-white mb-8">Aura AI</h2>
+                    <p className="text-xl text-gray-400 mb-12">Your intelligent trading assistant.</p>
+
+                    <div className="relative w-full max-w-xl mb-4">
+                      <div className="relative flex items-center w-full bg-gray-800 rounded-lg border border-gray-700 pr-2">
+                        <textarea
+                          placeholder="Ask anything (Shift + Enter for new line)"
+                          className="flex-1 bg-transparent text-white rounded-lg px-4 py-3 focus:outline-none resize-y min-h-[40px] max-h-[120px] custom-scrollbar"
+                          value={messageInput}
+                          onChange={(e) => setMessageInput(e.target.value)}
+                          onKeyDown={handleChatInputKeyDown}
+                          rows={Math.min(5, (messageInput.split('\n').length || 1))}
+                          disabled={isSendingMessage}
+                        />
+                        <button
+                          className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
+                          onClick={async () => { /* Logic here later */ }}
+                          disabled={isSendingMessage || !messageInput.trim()}
+                        >
+                          {isSendingMessage ? (
+                            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          ) : (
+                            <Send className="h-5 w-5" />
+                          )}
+                        </button>
+                        <button
+                          onClick={async () => { /* Logic here later */ }}
+                          className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+                          title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}
+                          disabled={isSendingMessage}
+                        >
+                          {isVoiceRecording ? <Volume2 className="h-5 w-5 text-white animate-pulse" /> : <Mic className="h-5 w-5 text-white" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex space-x-4 mt-4">
+                      <button className="bg-gray-700 text-gray-300 px-6 py-2 rounded-full hover:bg-gray-600 transition-colors">
+                        Create Images
+                      </button>
+                      <button className="bg-gray-700 text-gray-300 px-6 py-2 rounded-full hover:bg-gray-600 transition-colors">
+                        Edit Image
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Right Overlay Chat History Sidebar */}
+                <div
+                  className={`fixed inset-y-0 right-0 z-50 w-full md:w-80 flex-col bg-gray-900 border-l border-gray-800 transition-transform ease-out duration-300 ${
+                    isChatHistoryMobileOpen ? "translate-x-0" : "translate-x-full"
+                  } flex`}
+                >
+                  <div className="flex items-center justify-between p-4 border-b border-gray-800 flex-shrink-0">
+                    <h3 className="text-xl font-extrabold text-indigo-400">History</h3>
+                    <button onClick={() => setIsChatHistoryMobileOpen(false)} className="text-gray-400 hover:text-white">
+                      <X className="h-6 w-6" />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
+                    {/* Chat sessions will be rendered here */}
+                    <p className="text-gray-500 text-md text-center mt-4">No conversations yet.</p>
+                  </div>
+                  <div className="p-4 border-t border-gray-800 flex-shrink-0">
+                    <button
+                      onClick={handleNewConversation}
+                      className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 transition duration-200 ease-in-out transform hover:scale-105"
+                    >
+                      <Plus className="inline-block w-5 h-5 mr-2" /> Start New Chat
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Analysis View */}
+            {activeView === "analysis" && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-1 space-y-6">
+                  <div className="bg-gray-800/40 rounded-xl shadow-lg border border-purple-500/30 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-purple-300">MARKET SELECTION</h3>
+                      <BarChart3 className="w-5 h-5 text-purple-400" />
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Currency Pair</label>
+                        <select
+                          className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
+                          value={analysisCurrencyPair}
+                          onChange={(e) => setAnalysisCurrencyPair(e.target.value)}
+                        >
+                          <option>BTC/USD</option>
+                          <option>ETH/USD</option>
+                          <option>ADA/USD</option>
+                          <option>SOL/USD</option>
+                          <option>DOGE/USD</option>
+                          <option>XRP/USD</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Timeframe</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {availableTimeframes.map(tf => (
+                            <button
+                              key={tf}
+                              onClick={() => handleTimeframeButtonClick(tf)}
+                              className={`px-3 py-2 rounded-md text-sm font-medium transition-colors
+                                ${analysisTimeframes.includes(tf)
+                                  ? 'bg-purple-600 text-white'
+                                  : 'bg-gray-800/50 border border-gray-600 text-gray-300 hover:bg-gray-700/50'
+                                }`}
+                            >
+                              {tf}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Trade Type</label>
+                        <select
+                          className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
+                          value={analysisTradeType}
+                          onChange={(e) => setAnalysisTradeType(e.target.value)}
+                        >
+                          <option>Scalp (Quick trades)</option>
+                          <option>Day Trade (Intraday)</option>
+                          <option>Long Hold (Position)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-800/40 rounded-xl shadow-lg border border-blue-500/30 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-blue-300">TECHNICAL INDICATORS</h3>
+                      <TrendingUp className="w-5 h-5 text-blue-400" />
+                    </div>
+
+                    <div className="space-y-3">
+                      {availableIndicators.map((indicator) => (
+                        <div
+                          key={indicator.name}
+                          className="flex items-center justify-between p-2 hover:bg-gray-700/30 rounded"
+                        >
+                          <div>
+                            <div className="font-medium text-sm">{indicator.name}</div>
+                            <div className="text-xs text-gray-400">{indicator.desc}</div>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={analysisIndicators.includes(indicator.name)}
+                            onChange={() => handleIndicatorChange(indicator.name)}
+                            className="w-4 h-4 text-purple-600 bg-gray-700 border-gray-600 rounded focus:ring-purple-500"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-800/40 rounded-xl shadow-lg border border-emerald-500/30 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-emerald-300">TRADING PARAMETERS</h3>
+                      <DollarSign className="w-5 h-5 text-emerald-400" />
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Available Balance</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
+                          placeholder="10000.00"
+                          value={analysisBalance}
+                          onChange={(e) => setAnalysisBalance(e.target.value)}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Leverage</label>
+                        <select
+                          className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
+                          value={analysisLeverage}
+                          onChange={(e) => setAnalysisLeverage(e.target.value)}
+                        >
+                          <option>1x (No Leverage)</option>
+                          <option>1x5 (5x Leverage)</option>
+                          <option>1x10 (10x Leverage)</option>
+                          <option>1x25 (25x Leverage)</option>
+                          <option>1x50 (50x Leverage)</option>
+                          <option>1x100 (100x Leverage)</option>
+                          <option>1x200 (200x Leverage)</option>
+                        </select>
+                      </div>
+
+                      <button
+                        onClick={handleRunAnalysis}
+                        disabled={isAnalyzing}
+                        className="w-full inline-flex items-center justify-center px-5 py-3 rounded-lg font-semibold bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 transition-all duration-200 disabled:opacity-50"
+                      >
+                        {isAnalyzing ? (
+                          <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        ) : (
+                          <Play className="w-4 h-4 mr-2" />
+                        )}
+                        {isAnalyzing ? "Analyzing..." : "Run AI Analysis"}
+                      </button>
+                      {analysisError && <p className="text-red-500 text-sm mt-2">{analysisError}</p>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-2 space-y-6">
+                  <div className="bg-gray-800/40 rounded-xl shadow-lg border border-cyan-500/30 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-cyan-300">LIVE MARKET DATA</h3>
+                      <div className="flex items-center text-emerald-400">
+                        <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse mr-2"></div>
+                        <span className="text-sm">Connected</span>
+                      </div>
+                    </div>
+                    {/* Live market data will be rendered here */}
+                    <p className="text-gray-400">Live market data will appear here.</p>
+                  </div>
+
+                  <div className="bg-gray-800/40 rounded-xl shadow-lg border border-emerald-500/30 p-6">
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-lg font-semibold text-emerald-300">AI ANALYSIS RESULTS</h3>
+                      <div className="flex items-center text-purple-400">
+                        <Bot className="w-5 h-5 mr-2" />
+                        <span className="text-sm">Powered by Gemini AI</span>
+                      </div>
+                    </div>
+                    {/* AI Analysis results will be rendered here */}
+                    <p className="text-gray-400">Run an AI analysis to see detailed results here.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Trade Log View */}
+            {activeView === "trade-log" && (
+              <div className="flex flex-col space-y-6">
+                <h2 className="text-2xl font-bold text-white mb-6">Trade Log & Journal</h2>
+
+                {/* Add New Trade Form */}
+                <div className="bg-gray-800/40 rounded-xl shadow-lg border border-purple-500/30 p-6">
+                  <h3 className="text-lg font-semibold text-purple-300 mb-4">Add New Trade</h3>
+                  {/* Trade form elements */}
+                  <p className="text-gray-400">Trade log form will be here.</p>
+                </div>
+
+                {/* Trade Log Table */}
+                <div className="bg-gray-800/40 rounded-xl shadow-lg border border-cyan-500/30 p-6">
+                  <h3 className="text-lg font-semibold text-cyan-300 mb-4">Your Trades</h3>
+                  {/* Trade log table */}
+                  <p className="text-gray-400">Trade log history will be here.</p>
+                </div>
+
+                {/* Journal Entry Editor */}
+                {selectedTradeForJournal && (
+                  <div className="bg-gray-800/40 rounded-xl shadow-lg border border-emerald-500/30 p-6">
+                    <h3 className="text-lg font-semibold text-emerald-300 mb-4">Journal Entry for Trade ID: {selectedTradeForJournal.substring(0, 8)}...</h3>
+                    {/* Journal editor */}
+                    <p className="text-gray-400">Journal editor will be here.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Settings View */}
+            {activeView === "settings" && (
+              <div className="flex flex-col space-y-6">
+                <h2 className="text-2xl font-bold text-white mb-6">Settings</h2>
+
+                {/* API Configuration */}
+                <div className="bg-gray-800/40 rounded-xl shadow-lg border border-blue-500/30 p-6">
+                  <h3 className="text-lg font-semibold text-blue-300 mb-4">API Configuration</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Backend URL (Read-only)</label>
+                      <input
+                        type="text"
+                        readOnly
+                        className="w-full bg-gray-800/50 border border-gray-600 text-gray-400 rounded-md px-4 py-2 cursor-not-allowed"
+                        value={backendUrlSetting}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">This is set via environment variables (NEXT_PUBLIC_BACKEND_BASE_URL).</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">App ID (Read-only)</label>
+                      <input
+                        type="text"
+                        readOnly
+                        className="w-full bg-gray-800/50 border border-gray-600 text-gray-400 rounded-md px-4 py-2 cursor-not-allowed"
+                        value={appIdSetting}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">This is set via environment variables (NEXT_PUBLIC_APP_ID).</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* User Preferences */}
+                <div className="bg-gray-800/40 rounded-xl shadow-lg border border-purple-500/30 p-6">
+                  <h3 className="text-lg font-semibold text-purple-300 mb-4">User Preferences (Placeholder)</h3>
+                  <p className="text-gray-400">Future settings like theme, notification preferences, etc., will be added here.</p>
+                  <div className="mt-4">
+                    <label className="flex items-center space-x-2">
+                      <input type="checkbox" className="form-checkbox text-purple-600 bg-gray-700 border-gray-600 rounded" />
+                      <span className="text-gray-300">Enable Dark Mode (Already default)</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      </div>
+    </div>
+  )
 }

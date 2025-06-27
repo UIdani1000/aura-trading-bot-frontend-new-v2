@@ -245,9 +245,9 @@ function TradingDashboardContent() {
 
   const handleNewConversation = useCallback(async () => {
     // Check if Firebase is ready before proceeding
-    if (!db || !userId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
+    if (!db || !userId || !firestoreModule) { // Removed isAuthReady and isFirebaseServicesReady as they are often just part of db/userId readiness in useFirebase hook
       setCurrentAlert({ message: "Chat service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to create new conversation, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
+      console.warn("DIAG: Attempted to create new conversation, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
       return null; // Return null if not ready
     }
     console.log("DIAG: Creating new chat session...");
@@ -284,7 +284,8 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Failed to start new conversation: ${error.message}`, type: "error" });
       return null;
     }
-  }, [db, userId, aiAssistantName, isAuthReady, isFirebaseServicesReady, firestoreModule]);
+  }, [db, userId, aiAssistantName, firestoreModule]); // Removed isAuthReady, isFirebaseServicesReady from deps
+
 
   const handleSwitchConversation = (sessionId: string) => {
     setCurrentChatSessionId(sessionId);
@@ -392,7 +393,7 @@ function TradingDashboardContent() {
       }
       setCurrentAlert({ message: `Analysis failed: ${error.message || "Unknown error"}. Check backend deployment.`, type: "error" });
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, isFirebaseServicesReady, firestoreModule]);
+  }, [db, userId, currentChatSessionId, firestoreModule]); // Removed isAuthReady, isFirebaseServicesReady from deps
 
 
   const fetchBackendChatResponse = useCallback(async (requestBody: any) => {
@@ -467,9 +468,9 @@ function TradingDashboardContent() {
       return; // Added console.log for clarity
     }
     // Check if Firebase is ready before proceeding
-    if (!db || !userId || !currentChatSessionId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
+    if (!db || !userId || !currentChatSessionId || !firestoreModule) { // Removed isAuthReady and isFirebaseServicesReady
       setCurrentAlert({ message: "Chat service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to send message, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
+      console.warn("DIAG: Attempted to send message, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "firestoreModule:", !!firestoreModule);
       return;
     }
 
@@ -547,7 +548,8 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Error sending message: ${error.message || "Unknown error"}`, type: "error" });
       setIsSendingMessage(false);
     }
-  }, [messageInput, db, userId, currentChatSessionId, isAuthReady, isFirebaseServicesReady, firestoreModule, chatMessages, chatSessions, fetchBackendChatResponse]);
+  }, [messageInput, db, userId, currentChatSessionId, firestoreModule, chatMessages, chatSessions, fetchBackendChatResponse]); // Removed isAuthReady, isFirebaseServicesReady
+
 
   const handleStartVoiceRecording = useCallback(async () => {
     if (typeof window === 'undefined' || !navigator.mediaDevices) {
@@ -674,9 +676,9 @@ function TradingDashboardContent() {
       return;
     }
     // Check if Firebase is ready before proceeding
-    if (!db || !userId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
+    if (!db || !userId || !firestoreModule) { // Removed isAuthReady and isFirebaseServicesReady
       setCurrentAlert({ message: "Trade log service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to add trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
+      console.warn("DIAG: Attempted to add trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
       return;
     }
 
@@ -730,9 +732,9 @@ function TradingDashboardContent() {
       return;
     }
     // Check if Firebase is ready before proceeding
-    if (!db || !userId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
+    if (!db || !userId || !firestoreModule) { // Removed isAuthReady and isFirebaseServicesReady
       setCurrentAlert({ message: "Journal save service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to save journal, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
+      console.warn("DIAG: Attempted to save journal, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
       return;
     }
 
@@ -760,9 +762,9 @@ function TradingDashboardContent() {
 
   const handleDeleteTradeLog = async (tradeId: string) => {
     // Check if Firebase is ready before proceeding
-    if (!db || !userId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
+    if (!db || !userId || !firestoreModule) { // Removed isAuthReady and isFirebaseServicesReady
       setCurrentAlert({ message: "Trade log deletion service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to delete trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
+      console.warn("DIAG: Attempted to delete trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
       return;
     }
 
@@ -2012,7 +2014,7 @@ function TradingDashboardContent() {
                     </div>
                     <div>
                       <label className="block text-sm font-medium mb-1">App ID (Read-only)</label>
-                      {/* This is a comment to add a unique change near the problematic line for verification. */}
+                      {/* THIS IS A UNIQUE MARKER FOR VERIFICATION - DO NOT REMOVE THIS COMMENT */}
                       <input
                         type="text"
                         readOnly

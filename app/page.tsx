@@ -15,8 +15,8 @@ import {
   Plus,
   History,
   SquarePen,
-  Mic, // Make sure Mic icon is imported
-  Volume2, // Make sure Volume2 icon is imported for playing audio (though we'll use it for recording state here too)
+  Mic,
+  Volume2,
   TrendingDown,
   DollarSign,
   BarChart3,
@@ -71,6 +71,17 @@ interface AnalysisResult {
   ormcr_confirmation_status: string;
   ormcr_overall_bias: string;
   ormcr_reason: string;
+  // Added fields to match backend analysis response
+  symbol: string;
+  ai_suggestion: {
+    entry_type: string;
+    recommended_action: string;
+    position_size: string;
+    entry_price: string; // Added from backend response
+    direction: string; // Added from backend response
+    confidence: string; // Added from backend response
+    signal: string; // Added from backend response
+  };
 }
 
 // Market Data (for Dashboard and Analysis Live Price)
@@ -109,6 +120,17 @@ interface TradeLogEntry {
   journalEntry?: string;
 }
 
+// Chat message interface updated to include 'type' and 'audioUrl' and 'analysis'
+interface ChatMessage {
+  id: string;
+  sender: 'user' | 'ai';
+  text: string;
+  timestamp?: any;
+  type?: 'text' | 'audio' | 'analysis'; // Added 'audio' and 'analysis' type
+  audioUrl?: string; // For local playback of recorded audio
+  analysis?: AnalysisResult; // For storing full analysis object in message
+}
+
 // Custom Alert/Message component
 const CustomAlert: React.FC<{ message: string; type: 'success' | 'error' | 'warning' | 'info'; onClose: () => void }> = ({ message, type, onClose }) => {
   const bgColor = {
@@ -138,6 +160,9 @@ const CustomAlert: React.FC<{ message: string; type: 'success' | 'error' | 'warn
 
 // !!! THIS IS THE MAIN EXPORT FOR YOUR PAGE !!!
 export default function TradingDashboardWrapper() {
+  // Assuming FirebaseProvider itself handles initialization via environment variables
+  // If FirebaseProvider expects config props, they should be passed here.
+  // Based on your FirebaseProvider.tsx from previous uploads, it likely initializes internally.
   return (
     <FirebaseProvider>
       <TradingDashboardContent />
@@ -147,6 +172,7 @@ export default function TradingDashboardWrapper() {
 
 
 function TradingDashboardContent() {
+  // Use Firebase hook to get database, user ID, and readiness states
   const { db, userId, isAuthReady, isFirebaseServicesReady, firestoreModule } = useFirebase();
 
   // --- STATE VARIABLES ---
@@ -165,9 +191,7 @@ function TradingDashboardContent() {
   const [messageInput, setMessageInput] = useState("")
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const chatMessagesEndRef = useRef<HTMLDivElement>(null)
-  const [chatMessages, setChatMessages] = useState<
-    { id: string; sender: string; text: string; timestamp?: any; type?: string; audioUrl?: string }[] // Added type and audioUrl
-  >([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]); // Using new ChatMessage interface
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [currentChatSessionId, setCurrentChatSessionId] = useState<string | null>(null);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false); // State for voice recording
@@ -221,7 +245,7 @@ function TradingDashboardContent() {
   // Settings states
   const [backendUrlSetting, setBackendUrlSetting] = useState(BACKEND_BASE_URL);
   // Renamed to _setBackendUrlSetting to suppress ESLint no-unused-vars warning since it's read-only
-  const _setBackendUrlSetting = setBackendUrlSetting; 
+  const _setBackendUrlSetting = setBackendUrlSetting;
 
   const [appIdSetting, setAppIdSetting] = useState(appId);
   // Renamed to _setAppIdSetting to suppress ESLint no-unused-vars warning since it's read-only
@@ -256,11 +280,12 @@ function TradingDashboardContent() {
 
       // We add the initial greeting here AFTER session is created
       const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${newSessionRef.id}/messages`);
-      const initialGreeting = {
+      const initialGreeting: ChatMessage = { // Use ChatMessage interface
         id: crypto.randomUUID(),
         sender: 'ai',
         text: `Hello! I&apos;m ${aiAssistantName}, your AI trading assistant. How can I help you today?`,
-        timestamp: firestoreModule.serverTimestamp()
+        timestamp: firestoreModule.serverTimestamp(),
+        type: 'text' // Explicitly set type
       };
       await firestoreModule.addDoc(messagesCollectionRef, initialGreeting);
       console.log("DIAG: Initial greeting added to new chat session.");
@@ -280,6 +305,106 @@ function TradingDashboardContent() {
     console.log("DIAG: Switched to conversation ID:", sessionId);
   };
 
+  // Function to handle ORMCR analysis request from backend
+  const handleORMCRAnalysisRequest = useCallback(async (symbol: string) => {
+    // Add a temporary AI message indicating analysis is in progress
+    const analysisPendingMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      sender: 'ai',
+      type: 'text',
+      text: `Please wait while I retrieve ORMCR analysis for ${symbol}... This might take a moment.`,
+      timestamp: firestoreModule?.serverTimestamp(),
+    };
+    if (db && userId && currentChatSessionId && firestoreModule) {
+      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+      await firestoreModule.addDoc(messagesCollectionRef, analysisPendingMessage);
+    } else {
+      setChatMessages((prevMessages) => [...prevMessages, analysisPendingMessage]);
+    }
+
+
+    try {
+      const response = await fetch(`${BACKEND_BASE_URL}/run_ormcr_analysis`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ symbol: symbol, userId: userId }), // Pass userId to backend
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({error: response.statusText}));
+        throw new Error(`Backend analysis error! Status: ${response.status}. Message: ${errorData.error || "Unknown response"}`);
+      }
+
+      const analysisResult: AnalysisResult = await response.json();
+      console.log("DIAG: ORMCR Analysis Result:", analysisResult);
+
+      // Remove the "pending" message
+      if (db && userId && currentChatSessionId && firestoreModule) {
+        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
+        const querySnapshot = await firestoreModule.getDocs(q);
+        querySnapshot.forEach(async (doc) => {
+          await firestoreModule.deleteDoc(doc.ref);
+        });
+      } else {
+        setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
+      }
+
+
+      // Display the analysis as an AI analysis message
+      const aiAnalysisMessage: ChatMessage = { // Use ChatMessage interface
+        id: crypto.randomUUID(),
+        sender: 'ai',
+        type: 'analysis', // Set type to 'analysis'
+        text: `Here is the ORMCR analysis for ${symbol}:`,
+        timestamp: firestoreModule?.serverTimestamp(),
+        analysis: analysisResult, // Store the full analysis object
+      };
+
+      if (db && userId && currentChatSessionId && firestoreModule) {
+        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        await firestoreModule.addDoc(messagesCollectionRef, aiAnalysisMessage);
+        console.log("DIAG: AI analysis message added to Firestore.");
+      } else {
+        setChatMessages((prevMessages) => [...prevMessages, aiAnalysisMessage]);
+      }
+
+      setCurrentAlert({ message: "ORMCR Analysis completed and added to chat.", type: "success" });
+
+    } catch (error: any) {
+      console.error("DIAG: Error requesting ORMCR analysis:", error);
+      // Remove the "pending" message if still there
+      if (db && userId && currentChatSessionId && firestoreModule) {
+        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
+        const querySnapshot = await firestoreModule.getDocs(q);
+        querySnapshot.forEach(async (doc) => {
+          await firestoreModule.deleteDoc(doc.ref);
+        });
+      } else {
+        setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
+      }
+
+
+      const errorMessage: ChatMessage = { // Use ChatMessage interface
+        id: crypto.randomUUID(),
+        sender: 'ai',
+        type: 'text',
+        text: `Error requesting ORMCR analysis for ${symbol}. Details: ${error.message || "Unknown error"}.`,
+        timestamp: firestoreModule ? firestoreModule.serverTimestamp() : null,
+      };
+      if (db && userId && currentChatSessionId && firestoreModule) {
+        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        await firestoreModule.addDoc(messagesCollectionRef, errorMessage);
+      } else {
+        setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
+      }
+      setCurrentAlert({ message: `Analysis failed: ${error.message || "Unknown error"}. Check backend deployment.`, type: "error" });
+    }
+  }, [db, userId, currentChatSessionId, isAuthReady, isFirebaseServicesReady, firestoreModule]);
+
 
   const fetchBackendChatResponse = useCallback(async (requestBody: any) => {
     try {
@@ -296,25 +421,44 @@ function TradingDashboardContent() {
 
       const data = await response.json();
       const aiResponseText = data.response || "No response from AI."; // AI response expected as plain text or markdown
-      const aiMessage = { id: crypto.randomUUID(), sender: "ai", text: aiResponseText, timestamp: firestoreModule?.serverTimestamp() };
 
-      console.log("DIAG: AI response received:", data);
-      if (db && userId && currentChatSessionId && firestoreModule) {
-        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-        await firestoreModule.addDoc(messagesCollectionRef, aiMessage);
-        console.log("DIAG: AI response added to Firestore.");
+      // Check if the AI response indicates an analysis is needed
+      if (aiResponseText.includes("ORMCR_ANALYSIS_REQUESTED:")) {
+        const messageParts = aiResponseText.split("ORMCR_ANALYSIS_REQUESTED:");
+        const symbol = messageParts[1].trim(); // Extract the symbol requested by the AI
+        handleORMCRAnalysisRequest(symbol); // Trigger analysis
+      } else {
+        const aiMessage: ChatMessage = { // Use ChatMessage interface
+          id: crypto.randomUUID(),
+          sender: "ai",
+          text: aiResponseText,
+          timestamp: firestoreModule?.serverTimestamp(),
+          type: 'text'
+        };
 
-        const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
-        await firestoreModule.setDoc(sessionDocRef, {
-          lastMessageText: aiMessage.text,
-          lastMessageTimestamp: aiMessage.timestamp,
-        }, { merge: true });
+        console.log("DIAG: AI response received:", data);
+        if (db && userId && currentChatSessionId && firestoreModule) {
+          const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+          await firestoreModule.addDoc(messagesCollectionRef, aiMessage);
+          console.log("DIAG: AI response added to Firestore.");
+
+          const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
+          await firestoreModule.setDoc(sessionDocRef, {
+            lastMessageText: aiMessage.text,
+            lastMessageTimestamp: aiMessage.timestamp,
+          }, { merge: true });
+        }
       }
-
     } catch (error: any) {
       console.error("DIAG: Error communicating with backend:", error);
       setCurrentAlert({ message: `Failed to get AI response. Check backend deployment and URL: ${error.message || "Unknown error"}.`, type: "error" });
-      const errorMessage = { id: crypto.randomUUID(), sender: "ai", text: `Oops! I encountered an error getting a response from the backend: ${error.message || "Unknown error"}. Please check your backend's status and its URL configuration in Vercel. 😅`, timestamp: firestoreModule ? firestoreModule.serverTimestamp() : null };
+      const errorMessage: ChatMessage = { // Use ChatMessage interface
+        id: crypto.randomUUID(),
+        sender: "ai",
+        text: `Oops! I encountered an error getting a response from the backend: ${error.message || "Unknown error"}. Please check your backend's status and its URL configuration in Vercel. 😅`,
+        timestamp: firestoreModule ? firestoreModule.serverTimestamp() : null,
+        type: 'text'
+      };
       if (db && userId && currentChatSessionId && firestoreModule) {
         const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
         await firestoreModule.addDoc(messagesCollectionRef, errorMessage);
@@ -325,7 +469,7 @@ function TradingDashboardContent() {
       setIsSendingMessage(false);
       console.log("DIAG: Backend fetch finished.");
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages]);
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, handleORMCRAnalysisRequest]);
 
 
   const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {
@@ -347,7 +491,14 @@ function TradingDashboardContent() {
     setMessageInput(""); // Clear input immediately, will be re-populated for voice if needed
 
     try {
-      const userMessage = { id: crypto.randomUUID(), sender: "user", text: messageContent, timestamp: firestoreModule.serverTimestamp(), type: messageType, audioUrl: isVoice && audioBlob ? URL.createObjectURL(audioBlob) : undefined }; // Store object URL for local playback
+      const userMessage: ChatMessage = { // Use ChatMessage interface
+        id: crypto.randomUUID(),
+        sender: "user",
+        text: messageContent,
+        timestamp: firestoreModule.serverTimestamp(),
+        type: messageType,
+        audioUrl: isVoice && audioBlob ? URL.createObjectURL(audioBlob) : undefined
+      };
       console.log("DIAG: User message prepared:", userMessage);
 
       console.log("DIAG: Adding user message to Firestore for session:", currentChatSessionId);
@@ -356,7 +507,7 @@ function TradingDashboardContent() {
       console.log("DIAG: User message added to Firestore.");
 
       const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
-      
+
       // Automatic Conversation Naming Logic:
       // If this is the first user message in a new session (determined by message count and session state)
       // or if the session name is still generic ("New Chat..."), update the session name.
@@ -746,8 +897,9 @@ function TradingDashboardContent() {
           text: doc.data().text,
           timestamp: doc.data().timestamp,
           type: doc.data().type || 'text',
-          audioUrl: doc.data().audioUrl || undefined
-        })) as { id: string; sender: string; text: string; timestamp?: any; type?: string; audioUrl?: string }[];
+          audioUrl: doc.data().audioUrl || undefined,
+          analysis: doc.data().analysis || undefined, // Retrieve analysis data
+        })) as ChatMessage[]; // Use ChatMessage interface
         setChatMessages(messages);
       }, (error: any) => {
         console.error("DIAG: Error fetching messages for session", currentChatSessionId, ":", error);
@@ -760,7 +912,7 @@ function TradingDashboardContent() {
       };
     } else {
       setChatMessages([]); // Clear messages if not ready or no session
-      console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule, ")");
+      console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule, ")");
     }
   }, [db, userId, currentChatSessionId, isFirebaseServicesReady, isAuthReady, firestoreModule]);
 
@@ -965,7 +1117,7 @@ function TradingDashboardContent() {
             <Menu className="h-6 w-6" />
           </button>
           <h1 className="text-xl font-semibold">Aura Trading Dashboard</h1>
-          <div className="flex items-center space-x-4">
+          <div className="ml-auto flex items-center space-x-4"> {/* Added ml-auto here */}
             <Bell className="h-6 w-6 text-gray-400" />
             <span className="text-sm text-gray-400 mr-2">User ID: {isAuthReady && isFirebaseServicesReady && userId ? `${userId.substring(0, 8)}...` : 'Loading User...'}</span>
             <User className="h-6 w-6 text-gray-400" />
@@ -1096,28 +1248,78 @@ function TradingDashboardContent() {
                               } break-words`}
                             >
                               {/* Conditionally render with ReactMarkdown for AI messages */}
-                              {msg.sender === "ai" ? (
+                              {msg.type === "analysis" && msg.analysis ? (
+                                <div className="prose prose-invert text-sm max-w-none">
+                                  <h4 className="text-purple-300 font-semibold mb-2">ORMCR Analysis for {msg.analysis.symbol}</h4>
+                                  <p className="text-gray-300">
+                                    <span className="font-medium">Overall Bias:</span> {msg.analysis.ormcr_overall_bias || 'N/A'}
+                                  </p>
+                                  <p className="text-gray-300">
+                                    <span className="font-medium">Reason:</span>{" "}
+                                    <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+                                      {msg.analysis.ormcr_reason || 'No detailed reason provided.'}
+                                    </ReactMarkdown>
+                                  </p>
+
+                                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                                    <div><span className="font-medium">Entry Type:</span> {msg.analysis.ai_suggestion.entry_type || 'N/A'}</div>
+                                    <div><span className="font-medium">Recommended Action:</span> {msg.analysis.ai_suggestion.recommended_action || 'N/A'}</div>
+                                    <div><span className="font-medium">Position Size:</span> {msg.analysis.ai_suggestion.position_size || 'N/A'}</div>
+                                    <div><span className="font-medium">Entry Price:</span> {msg.analysis.ai_suggestion.entry_price || 'N/A'}</div>
+                                    <div><span className="font-medium">Direction:</span> {msg.analysis.ai_suggestion.direction || 'N/A'}</div>
+                                    <div><span className="font-medium">Confidence:</span> {msg.analysis.ai_suggestion.confidence || 'N/A'}</div>
+                                    <div><span className="font-medium">Signal:</span> {msg.analysis.ai_suggestion.signal || 'N/A'}</div>
+                                  </div>
+
+                                  {msg.analysis.ormcr_confirmation_status === "STRONG CONFIRMATION" && (
+                                    <div className="mt-3 text-xs grid grid-cols-3 gap-2">
+                                      <div className="text-red-400">
+                                        <span className="font-medium">Stop Loss:</span><br />
+                                        Price: {msg.analysis.stop_loss.price || 'N/A'}<br />
+                                        Change: {msg.analysis.stop_loss.percentage_change || 'N/A'}
+                                      </div>
+                                      <div className="text-green-400">
+                                        <span className="font-medium">Take Profit 1:</span><br />
+                                        Price: {msg.analysis.take_profit_1.price || 'N/A'}<br />
+                                        Change: {msg.analysis.take_profit_1.percentage_change || 'N/A'}
+                                      </div>
+                                      <div className="text-green-400">
+                                        <span className="font-medium">Take Profit 2:</span><br />
+                                        Price: {msg.analysis.take_profit_2.price || 'N/A'}<br />
+                                        Change: {msg.analysis.take_profit_2.percentage_change || 'N/A'}
+                                      </div>
+                                    </div>
+                                  )}
+                                  <div className="mt-3 text-sm text-gray-300">
+                                    <span className="font-medium">Technical Analysis:</span> {msg.analysis.technical_indicators_analysis || 'N/A'}
+                                  </div>
+                                  <div className="mt-3 text-sm text-gray-300">
+                                    <span className="font-medium">Next Steps:</span> {msg.analysis.next_step_for_user || 'N/A'}
+                                  </div>
+                                </div>
+                              ) : ( // Render normal text messages
                                 <div className="prose prose-invert prose-p:my-1 prose-li:my-1 prose-li:leading-tight prose-ul:my-1 text-sm leading-relaxed">
                                   <ReactMarkdown
                                     rehypePlugins={[rehypeRaw]}
                                     components={{
                                       // Custom components for styling Markdown elements
-                                      p: ({_node, ...props}) => <p className="mb-2" {...props} />, // Added _ to suppress warning
-                                      ul: ({_node, ...props}) => <ul className="list-disc list-inside mb-2" {...props} />, // Added _
-                                      ol: ({_node, ...props}) => <ol className="list-decimal list-inside mb-2" {...props} />, // Added _
-                                      li: ({_node, ...props}) => <li className="ml-4" {...props} />, // Added _
-                                      strong: ({_node, ...props}) => <strong className="font-semibold text-white" {...props} />, // Added _
-                                      em: ({_node, ...props}) => <em className="italic" {...props} />, // Added _
-                                      h1: ({_node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-2" {...props} />, // Added _
-                                      h2: ({_node, ...props}) => <h2 className="text-lg font-bold mt-3 mb-1" {...props} />, // Added _
-                                      h3: ({_node, ...props}) => <h3 className="text-md font-semibold mt-2 mb-1" {...props} />, // Added _
+                                      p: ({_node, ...props}) => <p className="mb-2" {...props} />, // Changed node to _node
+                                      ul: ({_node, ...props}) => <ul className="list-disc list-inside mb-2" {...props} />, // Changed node to _node
+                                      ol: ({_node, ...props}) => <ol className="list-decimal list-inside mb-2" {...props} />, // Changed node to _node
+                                      li: ({_node, ...props}) => <li className="ml-4" {...props} />, // Changed node to _node
+                                      strong: ({_node, ...props}) => <strong className="font-semibold text-white" {...props} />, // Changed node to _node
+                                      em: ({_node, ...props}) => <em className="italic" {...props} />, // Changed node to _node
+                                      h1: ({_node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-2" {...props} />, // Changed node to _node
+                                      h2: ({_node, ...props}) => <h2 className="text-lg font-bold mt-3 mb-1" {...props} />, // Changed node to _node
+                                      h3: ({_node, ...props}) => <h3 className="text-md font-semibold mt-2 mb-1" {...props} />, // Changed node to _node
                                     }}
                                   >
                                     {msg.text}
                                   </ReactMarkdown>
                                 </div>
-                              ) : (
-                                <p>{msg.text}</p>
+                              )}
+                              {msg.type === 'audio' && msg.audioUrl && (
+                                <audio controls src={msg.audioUrl} className="mt-2 w-full"></audio>
                               )}
                               {msg.timestamp && typeof msg.timestamp.toDate === 'function' && (
                                   <p className="text-xs text-gray-400 mt-1 text-right">
@@ -1146,7 +1348,7 @@ function TradingDashboardContent() {
                         />
                         <button
                           className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
-                          onClick={handleSendMessage} {/* FIX: Direct call, handleSendMessage already checks messageInput.trim() */}
+                          onClick={handleSendMessage}
                           disabled={isSendingMessage || !messageInput.trim()} // Disable if input is empty
                         >
                           {isSendingMessage ? (

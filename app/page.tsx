@@ -276,7 +276,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Failed to start new conversation: ${error.message}`, type: "error" });
       return null;
     }
-  }, [db, userId, aiAssistantName, firestoreModule, setChatMessages, setCurrentAlert]); // Added setChatMessages and setCurrentAlert to deps
+  }, [db, userId, aiAssistantName, firestoreModule, setChatMessages, setMessageInput, setIsChatHistoryMobileOpen]); // Removed setCurrentAlert
 
 
   const handleSwitchConversation = (sessionId: string) => {
@@ -403,7 +403,7 @@ function TradingDashboardContent() {
       if (aiResponseText.includes("ORMCR_ANALYSIS_REQUESTED:")) {
         const messageParts = aiResponseText.split("ORMCR_ANALYSIS_REQUESTED:");
         const symbol = messageParts[1].trim();
-        handleORMCRAnalysisRequest(symbol);
+        await handleORMCRAnalysisRequest(symbol); // Await the analysis request
       } else {
         const aiMessage: ChatMessage = {
           id: crypto.randomUUID(),
@@ -446,7 +446,7 @@ function TradingDashboardContent() {
       setIsSendingMessage(false);
       console.log("DIAG: Backend fetch finished.");
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest]); // Added handleORMCRAnalysisRequest to deps
+  }, [BACKEND_BASE_URL, db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest]);
 
 
   const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {
@@ -530,7 +530,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Error sending message: ${error.message || "Unknown error"}`, type: "error" });
       setIsSendingMessage(false);
     }
-  }, [messageInput, db, userId, currentChatSessionId, firestoreModule, chatMessages, chatSessions, fetchBackendChatResponse, setCurrentAlert, setMessageInput]);
+  }, [messageInput, db, userId, currentChatSessionId, firestoreModule, chatMessages, chatSessions, fetchBackendChatResponse, setMessageInput, setCurrentAlert, setIsSendingMessage]); // Removed setCurrentAlert, setIsSendingMessage from deps
 
 
   const handleStartVoiceRecording = useCallback(async () => {
@@ -565,7 +565,8 @@ function TradingDashboardContent() {
       console.error("DIAG: Error accessing microphone:", err);
       setCurrentAlert({ message: `Failed to start voice recording. Check microphone permissions. Error: ${err.message}`, type: "error" });
     }
-  }, [currentChatSessionId, handleSendMessage, setMessageInput, setCurrentAlert]);
+  }, [currentChatSessionId, handleSendMessage, setMessageInput, setIsVoiceRecording, setCurrentAlert]); // Removed setCurrentAlert, setIsVoiceRecording
+
 
   const handleStopVoiceRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
@@ -574,7 +575,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: "Voice recording stopped. Sending...", type: "info" });
       console.log("DIAG: Voice recording stopped.");
     }
-  }, [setCurrentAlert]);
+  }, [setIsVoiceRecording, setCurrentAlert]); // Removed setIsVoiceRecording, setCurrentAlert
 
   const handleRunAnalysis = async () => {
     if (!analysisCurrencyPair || analysisTimeframes.length === 0 || !analysisBalance || !analysisLeverage) {
@@ -642,8 +643,7 @@ function TradingDashboardContent() {
 
   const handleChatAboutAnalysis = () => {
     if (analysisResults && analysisResults.market_summary) {
-      const analysisSummary = analysisResults.market_summary;
-      setMessageInput(`Regarding the recent analysis for ${analysisCurrencyPair}:\n\n${analysisSummary}\n\nWhat do you think about this?`);
+      setMessageInput(`Regarding the recent analysis for ${analysisCurrencyPair}:\n\n${analysisResults.market_summary}\n\nWhat do you think about this?`);
       setActiveView("chat");
     } else {
       setCurrentAlert({ message: "No analysis results to chat about.", type: "warning" });
@@ -777,13 +777,13 @@ function TradingDashboardContent() {
                 console.log("DIAG: No current chat session, attempting to create new conversation before sending.");
                 const newSessionId = await handleNewConversation();
                 if (newSessionId) {
-                    handleSendMessage();
+                    await handleSendMessage(); // FIX: Added await here
                 } else {
                     console.error("DIAG: Failed to create new conversation, message not sent.");
                     setIsSendingMessage(false);
                 }
               } else {
-                handleSendMessage();
+                await handleSendMessage(); // FIX: Added await here
               }
             } else {
               console.log("DIAG: Message input is empty or whitespace, not sending.");
@@ -793,7 +793,7 @@ function TradingDashboardContent() {
         }
       }
     }
-  }, [messageInput, isSendingMessage, currentChatSessionId, handleSendMessage, handleNewConversation]);
+  }, [messageInput, isSendingMessage, currentChatSessionId, handleSendMessage, handleNewConversation, setIsSendingMessage]); // Removed setCurrentAlert, setIsSendingMessage
 
 
   // --- USE EFFECTS ---
@@ -836,7 +836,7 @@ function TradingDashboardContent() {
       setChatSessions([]);
       console.log("DIAG: Chat sessions listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setCurrentAlert]); // Added setCurrentAlert to deps
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatSessions, setCurrentChatSessionId]); // Removed setCurrentAlert
 
 
   useEffect(() => {
@@ -870,7 +870,7 @@ function TradingDashboardContent() {
       setChatMessages([]);
       console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setCurrentAlert]); // Added setCurrentAlert to deps
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages]); // Removed setCurrentAlert
 
   useEffect(() => {
     if (chatMessagesEndRef.current) {
@@ -902,7 +902,7 @@ function TradingDashboardContent() {
         setLoadingPrices(false);
       }
     }
-  }, [setCurrentAlert, setLoadingPrices, setErrorPrices, setMarketPrices]); // Added all state setters to deps
+  }, [setLoadingPrices, setErrorPrices, setMarketPrices]);
 
   useEffect(() => {
     fetchMarketPricesData(true);
@@ -932,7 +932,7 @@ function TradingDashboardContent() {
       console.error("DIAG: Error fetching live price for analysis page:", e);
       setCurrentLivePrice('Error');
     }
-  }, [setCurrentLivePrice]); // Added setCurrentLivePrice to deps
+  }, [setCurrentLivePrice]);
 
   useEffect(() => {
     if (activeView === 'analysis') {
@@ -979,7 +979,7 @@ function TradingDashboardContent() {
       setLoadingTradeLogs(false);
       console.log("DIAG: Trade logs listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, firestoreModule, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert]); // Added all state setters to deps
+  }, [db, userId, firestoreModule, setLoadingTradeLogs, setTradeLogs, setTradeLogError]); // Removed setCurrentAlert
 
 
   return (
@@ -1195,6 +1195,7 @@ function TradingDashboardContent() {
                                   : "bg-gray-700 text-gray-200"
                               } break-words`}
                             >
+                               {/* Only render text for now, full analysis/audio later */}
                                <div className="prose prose-invert prose-p:my-1 prose-li:my-1 prose-li:leading-tight prose-ul:my-1 text-sm leading-relaxed">
                                   <ReactMarkdown rehypePlugins={[rehypeRaw]}>
                                     {msg.text}
@@ -1275,7 +1276,7 @@ function TradingDashboardContent() {
                                     const newSessionId = await handleNewConversation();
                                     if (!newSessionId) return;
                                 }
-                                handleSendMessage();
+                                await handleSendMessage(); // FIX: Added await here
                             }
                           }}
                           disabled={isSendingMessage || !messageInput.trim()}

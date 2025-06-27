@@ -125,7 +125,7 @@ interface ChatMessage {
   analysis?: AnalysisResult; // For storing full analysis object in message
 }
 
-// Custom Alert/Message component (only its definition, no usage yet)
+// Custom Alert/Message component
 const CustomAlert: React.FC<{ message: string; type: 'success' | 'error' | 'warning' | 'info'; onClose: () => void }> = ({ message, type, onClose }) => {
   const bgColor = {
     'success': 'bg-emerald-600',
@@ -164,7 +164,6 @@ export default function TradingDashboardWrapper() {
 
 function TradingDashboardContent() {
   // Use Firebase hook to get database, user ID, and readiness states
-  // We're keeping minimal dependencies here for now
   const { db, userId, firestoreModule } = useFirebase();
 
   // --- STATE VARIABLES ---
@@ -239,22 +238,562 @@ function TradingDashboardContent() {
   const [appIdSetting] = useState(appId);
 
 
-  // --- HANDLERS (Empty for now, will be added incrementally) ---
-  const handleNewConversation = useCallback(async () => { /* Logic here later */ return null; }, []);
-  const handleSwitchConversation = (sessionId: string) => {};
-  const handleORMCRAnalysisRequest = useCallback(async (symbol: string) => {}, []);
-  const fetchBackendChatResponse = useCallback(async (requestBody: any) => {}, []);
-  const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {}, []);
-  const handleStartVoiceRecording = useCallback(async () => {}, []);
-  const handleStopVoiceRecording = useCallback(() => {}, []);
-  const handleRunAnalysis = async () => {};
-  const handleIndicatorChange = (indicatorName: string) => {};
-  const handleTimeframeButtonClick = (tf: string) => {};
-  const handleChatAboutAnalysis = () => {};
-  const handleAddTradeLog = async () => {};
-  const handleSaveJournalEntry = async () => {};
-  const handleDeleteTradeLog = async (tradeId: string) => {};
-  const handleChatInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {}, []);
+  // --- HANDLERS ---
+
+  const handleNewConversation = useCallback(async () => {
+    if (!db || !userId || !firestoreModule) {
+      setCurrentAlert({ message: "Chat service not ready. Please wait a moment for authentication to complete.", type: "warning" });
+      console.warn("DIAG: Attempted to create new conversation, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
+      return null;
+    }
+    console.log("DIAG: Creating new chat session...");
+    try {
+      const sessionsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions`);
+      const newSessionRef = await firestoreModule.addDoc(sessionsCollectionRef, {
+        name: "New Chat " + new Date().toLocaleString().split(',')[0],
+        createdAt: firestoreModule.serverTimestamp(),
+        lastMessageText: "No messages yet.",
+      });
+      setMessageInput('');
+      setChatMessages([]);
+      setIsChatHistoryMobileOpen(false);
+      setCurrentAlert({ message: "New conversation started! Type your first message.", type: "success" });
+      console.log("DIAG: New chat session created with ID:", newSessionRef.id);
+
+      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${newSessionRef.id}/messages`);
+      const initialGreeting: ChatMessage = {
+        id: crypto.randomUUID(),
+        sender: 'ai',
+        text: `Hello! I&apos;m ${aiAssistantName}, your AI trading assistant. How can I help you today?`,
+        timestamp: firestoreModule.serverTimestamp(),
+        type: 'text'
+      };
+      await firestoreModule.addDoc(messagesCollectionRef, initialGreeting);
+      console.log("DIAG: Initial greeting added to new chat session.");
+      return newSessionRef.id;
+    } catch (error: any) {
+      console.error("DIAG: Error creating new conversation:", error);
+      setCurrentAlert({ message: `Failed to start new conversation: ${error.message}`, type: "error" });
+      return null;
+    }
+  }, [db, userId, aiAssistantName, firestoreModule, setChatMessages, setCurrentAlert]); // Added setChatMessages and setCurrentAlert to deps
+
+
+  const handleSwitchConversation = (sessionId: string) => {
+    setCurrentChatSessionId(sessionId);
+    setIsChatHistoryMobileOpen(false);
+    setMessageInput('');
+    setCurrentAlert({ message: "Switched to selected conversation.", type: "info" });
+    console.log("DIAG: Switched to conversation ID:", sessionId);
+  };
+
+
+  const handleORMCRAnalysisRequest = useCallback(async (symbol: string) => {
+    const analysisPendingMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      sender: 'ai',
+      type: 'text',
+      text: `Please wait while I retrieve ORMCR analysis for ${symbol}... This might take a moment.`,
+      timestamp: firestoreModule?.serverTimestamp(),
+    };
+    if (db && userId && currentChatSessionId && firestoreModule) {
+      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+      await firestoreModule.addDoc(messagesCollectionRef, analysisPendingMessage);
+    } else {
+      setChatMessages((prevMessages) => [...prevMessages, analysisPendingMessage]);
+    }
+
+
+    try {
+      const response = await fetch(`${BACKEND_BASE_URL}/run_ormcr_analysis`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ symbol: symbol, userId: userId }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({error: response.statusText}));
+        throw new Error(`Backend analysis error! Status: ${response.status}. Message: ${errorData.error || "Unknown response"}`);
+      }
+
+      const analysisResult: AnalysisResult = await response.json();
+      console.log("DIAG: ORMCR Analysis Result:", analysisResult);
+
+      if (db && userId && currentChatSessionId && firestoreModule) {
+        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
+        const querySnapshot = await firestoreModule.getDocs(q);
+        querySnapshot.forEach(async (doc: any) => {
+          await firestoreModule.deleteDoc(doc.ref);
+        });
+      } else {
+        setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
+      }
+
+
+      const aiAnalysisMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        sender: 'ai',
+        type: 'analysis',
+        text: `Here is the ORMCR analysis for ${symbol}:`,
+        timestamp: firestoreModule?.serverTimestamp(),
+        analysis: analysisResult,
+      };
+
+      if (db && userId && currentChatSessionId && firestoreModule) {
+        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        await firestoreModule.addDoc(messagesCollectionRef, aiAnalysisMessage);
+        console.log("DIAG: AI analysis message added to Firestore.");
+      } else {
+        setChatMessages((prevMessages) => [...prevMessages, aiAnalysisMessage]);
+      }
+
+      setCurrentAlert({ message: "ORMCR Analysis completed and added to chat.", type: "success" });
+
+    } catch (error: any) {
+      console.error("DIAG: Error requesting ORMCR analysis:", error);
+      if (db && userId && currentChatSessionId && firestoreModule) {
+        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
+        const querySnapshot = await firestoreModule.getDocs(q);
+        querySnapshot.forEach(async (doc: any) => {
+          await firestoreModule.deleteDoc(doc.ref);
+        });
+      } else {
+        setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
+      }
+
+
+      const errorMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        sender: 'ai',
+        type: 'text',
+        text: `Error requesting ORMCR analysis for ${symbol}. Details: ${error.message || "Unknown error"}.`,
+        timestamp: firestoreModule ? firestoreModule.serverTimestamp() : null,
+      };
+      if (db && userId && currentChatSessionId && firestoreModule) {
+        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        await firestoreModule.addDoc(messagesCollectionRef, errorMessage);
+      } else {
+        setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
+      }
+      setCurrentAlert({ message: `Analysis failed: ${error.message || "Unknown error"}. Check backend deployment.`, type: "error" });
+    }
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert]);
+
+
+  const fetchBackendChatResponse = useCallback(async (requestBody: any) => {
+    try {
+      const response = await fetch(`${BACKEND_BASE_URL}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({error: response.statusText}));
+        throw new Error(`Backend error! Status: ${response.status}. Message: ${errorData.error || "Unknown response"}`);
+      }
+
+      const data = await response.json();
+      const aiResponseText = data.response || "No response from AI.";
+
+      if (aiResponseText.includes("ORMCR_ANALYSIS_REQUESTED:")) {
+        const messageParts = aiResponseText.split("ORMCR_ANALYSIS_REQUESTED:");
+        const symbol = messageParts[1].trim();
+        handleORMCRAnalysisRequest(symbol);
+      } else {
+        const aiMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          sender: "ai",
+          text: aiResponseText,
+          timestamp: firestoreModule?.serverTimestamp(),
+          type: 'text'
+        };
+
+        console.log("DIAG: AI response received:", data);
+        if (db && userId && currentChatSessionId && firestoreModule) {
+          const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+          await firestoreModule.addDoc(messagesCollectionRef, aiMessage);
+          console.log("DIAG: AI response added to Firestore.");
+
+          const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
+          await firestoreModule.setDoc(sessionDocRef, {
+            lastMessageText: aiMessage.text,
+            lastMessageTimestamp: aiMessage.timestamp,
+          }, { merge: true });
+        }
+      }
+    } catch (error: any) {
+      console.error("DIAG: Error communicating with backend:", error);
+      setCurrentAlert({ message: `Failed to get AI response. Check backend deployment and URL: ${error.message || "Unknown error"}.`, type: "error" });
+      const errorMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        sender: "ai",
+        text: `Oops! I encountered an error getting a response from the backend: ${error.message || "Unknown error"}. Please check your backend's status and its URL configuration in Vercel. 😅`,
+        timestamp: firestoreModule ? firestoreModule.serverTimestamp() : null,
+        type: 'text'
+      };
+      if (db && userId && currentChatSessionId && firestoreModule) {
+        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        await firestoreModule.addDoc(messagesCollectionRef, errorMessage);
+      } else {
+        setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
+      }
+    } finally {
+      setIsSendingMessage(false);
+      console.log("DIAG: Backend fetch finished.");
+    }
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest]); // Added handleORMCRAnalysisRequest to deps
+
+
+  const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {
+    if (!messageInput.trim() && !isVoice) {
+      console.log("DIAG: handleSendMessage aborted: message is empty or only whitespace, and not a voice message.");
+      return;
+    }
+    if (!db || !userId || !currentChatSessionId || !firestoreModule) {
+      setCurrentAlert({ message: "Chat service not ready. Please wait a moment for authentication to complete.", type: "warning" });
+      console.warn("DIAG: Attempted to send message, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "firestoreModule:", !!firestoreModule);
+      return;
+    }
+
+    const messageContent = messageInput.trim();
+    const messageType = isVoice ? 'audio' : 'text';
+
+    setIsSendingMessage(true);
+    setMessageInput("");
+
+    try {
+      const userMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        sender: "user",
+        text: messageContent,
+        timestamp: firestoreModule.serverTimestamp(),
+        type: messageType,
+        audioUrl: isVoice && audioBlob ? URL.createObjectURL(audioBlob) : undefined
+      };
+      console.log("DIAG: User message prepared:", userMessage);
+
+      console.log("DIAG: Adding user message to Firestore for session:", currentChatSessionId);
+      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+      await firestoreModule.addDoc(messagesCollectionRef, userMessage);
+      console.log("DIAG: User message added to Firestore.");
+
+      const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
+
+      const isFirstMessageInNewSession = chatMessages.length === 1 && chatMessages[0].sender === 'ai';
+      const currentSession = chatSessions.find((s: ChatSession) => s.id === currentChatSessionId);
+      const isSessionNameGeneric = currentSession && currentSession.name.startsWith("New Chat");
+
+      let newSessionName = currentSession?.name || "Untitled Chat";
+      if (isFirstMessageInNewSession || isSessionNameGeneric) {
+          newSessionName = userMessage.text.substring(0, 30) + (userMessage.text.length > 30 ? '...' : '');
+      }
+
+      await firestoreModule.setDoc(sessionDocRef, {
+        lastMessageText: userMessage.text,
+        lastMessageTimestamp: userMessage.timestamp,
+        name: newSessionName,
+      }, { merge: true });
+
+      const payloadHistory = chatMessages
+        .filter(msg => msg.id !== 'initial-greeting')
+        .map(msg => ({ role: msg.sender === "user" ? "user" : "model", text: msg.text }));
+      payloadHistory.push({ role: 'user', text: userMessage.text });
+
+
+      const requestBody: any = {
+        session_id: currentChatSessionId,
+        user_id: userId,
+        message: userMessage.text,
+        message_type: messageType,
+        chatHistory: payloadHistory
+      };
+
+      if (isVoice && audioBlob) {
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = async () => {
+          const base64Audio = (reader.result as string).split(',')[1];
+          requestBody.audio_data = base64Audio;
+          await fetchBackendChatResponse(requestBody);
+        };
+      } else {
+        await fetchBackendChatResponse(requestBody);
+      }
+
+    } catch (error: any) {
+      console.error("DIAG: Error in handleSendMessage (pre-backend-fetch):", error);
+      setCurrentAlert({ message: `Error sending message: ${error.message || "Unknown error"}`, type: "error" });
+      setIsSendingMessage(false);
+    }
+  }, [messageInput, db, userId, currentChatSessionId, firestoreModule, chatMessages, chatSessions, fetchBackendChatResponse, setCurrentAlert, setMessageInput]);
+
+
+  const handleStartVoiceRecording = useCallback(async () => {
+    if (typeof window === 'undefined' || !navigator.mediaDevices) {
+      console.error("MediaDevices not supported in this environment.");
+      setCurrentAlert({ message: "Voice recording not supported in this browser.", type: "error" });
+      return;
+    }
+    if (!currentChatSessionId) {
+      setCurrentAlert({ message: "Please start a new chat session before recording voice.", type: "warning" });
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        audioChunksRef.current.push(event.data);
+      };
+      mediaRecorderRef.current.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        console.log("DIAG: Audio recording stopped, blob created:", audioBlob);
+        setMessageInput("[Voice Message]");
+        await handleSendMessage(true, audioBlob);
+        audioChunksRef.current = [];
+        stream.getTracks().forEach(track => track.stop());
+      };
+      mediaRecorderRef.current.start();
+      setIsVoiceRecording(true);
+      setCurrentAlert({ message: "Recording voice...", type: "info" });
+      console.log("DIAG: Voice recording started.");
+    } catch (err: any) {
+      console.error("DIAG: Error accessing microphone:", err);
+      setCurrentAlert({ message: `Failed to start voice recording. Check microphone permissions. Error: ${err.message}`, type: "error" });
+    }
+  }, [currentChatSessionId, handleSendMessage, setMessageInput, setCurrentAlert]);
+
+  const handleStopVoiceRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
+      setIsVoiceRecording(false);
+      setCurrentAlert({ message: "Voice recording stopped. Sending...", type: "info" });
+      console.log("DIAG: Voice recording stopped.");
+    }
+  }, [setCurrentAlert]);
+
+  const handleRunAnalysis = async () => {
+    if (!analysisCurrencyPair || analysisTimeframes.length === 0 || !analysisBalance || !analysisLeverage) {
+      setCurrentAlert({ message: "Please select a Currency Pair, at least one Timeframe, Available Balance, and Leverage.", type: "warning" });
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setAnalysisError(null);
+    setAnalysisResult(null);
+
+    const analysisInput = {
+      currencyPair: analysisCurrencyPair,
+      timeframes: analysisTimeframes,
+      tradeType: analysisTradeType,
+      indicators: analysisIndicators,
+      availableBalance: parseFloat(analysisBalance),
+      leverage: analysisLeverage.includes('x (No Leverage)') ? 1 : parseFloat(analysisLeverage.replace('x', '')),
+    };
+    console.log("DIAG: Running analysis with input:", analysisInput, "to backend:", BACKEND_BASE_URL + "/run_ormcr_analysis");
+
+    try {
+      const response = await fetch(`${BACKEND_BASE_URL}/run_ormcr_analysis`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...analysisInput, userId }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({error: response.statusText}));
+        throw new Error(`Backend error! Status: ${response.status}. Message: ${errorData.error || "Unknown response"}`);
+      }
+
+      const data: AnalysisResult = await response.json();
+      setAnalysisResult(data);
+      setCurrentAlert({ message: "ORSCR Analysis completed!", type: "success" });
+      console.log("DIAG: Analysis results received:", data);
+
+    } catch (error: any) {
+      console.error("DIAG: Error running ORMCR analysis:", error);
+      setAnalysisError(error.message || "Failed to run analysis.");
+      setCurrentAlert({ message: `Analysis failed: ${error.message || "Unknown error"}. Check backend deployment.`, type: "error" });
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleIndicatorChange = (indicatorName: string) => {
+    setAnalysisIndicators(prev =>
+      prev.includes(indicatorName)
+        ? prev.filter(name => name !== indicatorName)
+        : [...prev, indicatorName]
+    );
+  };
+
+  const handleTimeframeButtonClick = (tf: string) => {
+    setAnalysisTimeframes(prev => {
+      const newTimeframes = prev.includes(tf)
+        ? prev.filter(selectedTf => selectedTf !== tf)
+        : [...prev, tf];
+      const order = ['D1', 'H4', 'H1', 'M30', 'M15', 'M5', 'M1'];
+      return newTimeframes.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    });
+  };
+
+  const handleChatAboutAnalysis = () => {
+    if (analysisResults && analysisResults.market_summary) {
+      const analysisSummary = analysisResults.market_summary;
+      setMessageInput(`Regarding the recent analysis for ${analysisCurrencyPair}:\n\n${analysisSummary}\n\nWhat do you think about this?`);
+      setActiveView("chat");
+    } else {
+      setCurrentAlert({ message: "No analysis results to chat about.", type: "warning" });
+    }
+  };
+
+  // Trade Log Handlers
+  const handleAddTradeLog = async () => {
+    if (!tradeLogForm.currencyPair || !tradeLogForm.entryPrice || !tradeLogForm.exitPrice || !tradeLogForm.volume) {
+      setCurrentAlert({ message: "Please fill in all trade log fields.", type: "warning" });
+      return;
+    }
+    if (!db || !userId || !firestoreModule) {
+      setCurrentAlert({ message: "Trade log service not ready. Please wait a moment for authentication to complete.", type: "warning" });
+      console.warn("DIAG: Attempted to add trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
+      return;
+    }
+
+    setIsAddingTrade(true);
+    setTradeLogError(null);
+
+    try {
+      const entryPriceNum = parseFloat(tradeLogForm.entryPrice);
+      const exitPriceNum = parseFloat(tradeLogForm.exitPrice);
+      const volumeNum = parseFloat(tradeLogForm.volume);
+
+      if (isNaN(entryPriceNum) || isNaN(exitPriceNum) || isNaN(volumeNum)) {
+          throw new Error("Invalid number format for price or volume.");
+      }
+
+      const profitOrLoss = (exitPriceNum - entryPriceNum) * volumeNum;
+
+      const tradeLogEntry = {
+        currencyPair: tradeLogForm.currencyPair,
+        entryPrice: entryPriceNum,
+        exitPrice: exitPriceNum,
+        volume: volumeNum,
+        profitOrLoss: parseFloat(profitOrLoss.toFixed(2)),
+        timestamp: firestoreModule.serverTimestamp(),
+      };
+
+      const tradeLogsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`);
+      await firestoreModule.addDoc(tradeLogsCollectionRef, tradeLogEntry);
+
+      setCurrentAlert({ message: "Trade log added successfully!", type: "success" });
+      setTradeLogForm({
+        currencyPair: "BTC/USD",
+        entryPrice: "",
+        exitPrice: "",
+        volume: "",
+        profitOrLoss: "",
+      });
+      console.log("DIAG: Trade log added:", tradeLogEntry);
+    } catch (error: any) {
+      console.error("DIAG: Error adding trade log:", error);
+      setTradeLogError(error.message || "Failed to add trade log.");
+      setCurrentAlert({ message: `Failed to add trade log: ${error.message}`, type: "error" });
+    } finally {
+      setIsAddingTrade(false);
+    }
+  };
+
+  const handleSaveJournalEntry = async () => {
+    if (!selectedTradeForJournal || !journalEntry.trim()) {
+      setCurrentAlert({ message: "Please select a trade and write a journal entry.", type: "warning" });
+      return;
+    }
+    if (!db || !userId || !firestoreModule) {
+      setCurrentAlert({ message: "Journal save service not ready. Please wait a moment for authentication to complete.", type: "warning" });
+      console.warn("DIAG: Attempted to save journal, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
+      return;
+    }
+
+    setIsSavingJournal(true);
+    setTradeLogError(null);
+
+    try {
+      const tradeDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, selectedTradeForJournal);
+      await firestoreModule.updateDoc(tradeDocRef, {
+        journalEntry: journalEntry,
+      });
+
+      setCurrentAlert({ message: "Journal entry saved successfully!", type: "success" });
+      setJournalEntry("");
+      setSelectedTradeForJournal(null);
+      console.log("DIAG: Journal entry saved for trade:", selectedTradeForJournal);
+    } catch (error: any) {
+      console.error("DIAG: Error saving journal entry:", error);
+      setTradeLogError(error.message || "Failed to save journal entry.");
+      setCurrentAlert({ message: `Failed to save journal entry: ${error.message}`, type: "error" });
+    } finally {
+      setIsSavingJournal(false);
+    }
+  };
+
+  const handleDeleteTradeLog = async (tradeId: string) => {
+    if (!db || !userId || !firestoreModule) {
+      setCurrentAlert({ message: "Trade log deletion service not ready. Please wait a moment for authentication to complete.", type: "warning" });
+      console.warn("DIAG: Attempted to delete trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
+      return;
+    }
+
+    setTradeLogError(null);
+    if (window.confirm("Are you sure you want to delete this trade log?")) {
+      try {
+        const tradeDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, tradeId);
+        await firestoreModule.deleteDoc(tradeDocRef);
+        setCurrentAlert({ message: "Trade log deleted successfully!", type: "success" });
+        console.log("DIAG: Trade log deleted:", tradeId);
+      } catch (error: any) {
+        console.error("DIAG: Error deleting trade log:", error);
+        setTradeLogError(error.message || "Failed to delete trade log.");
+        setCurrentAlert({ message: `Failed to delete trade log: ${error.message}`, type: "error" });
+      }
+    }
+  };
+
+
+  const handleChatInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    console.log("DIAG: KeyDown detected:", e.key, "Shift pressed:", e.shiftKey, "isSendingMessage:", isSendingMessage);
+
+    if (e.key === 'Enter') {
+      if (e.shiftKey) {
+        console.log("DIAG: Shift + Enter detected. Allowing default (new line).");
+      } else {
+        e.preventDefault();
+        console.log("DIAG: Enter (no Shift) detected. Preventing default, attempting to send message.");
+        if (!isSendingMessage) {
+            if (messageInput.trim()) {
+              if (!currentChatSessionId) {
+                console.log("DIAG: No current chat session, attempting to create new conversation before sending.");
+                const newSessionId = await handleNewConversation();
+                if (newSessionId) {
+                    handleSendMessage();
+                } else {
+                    console.error("DIAG: Failed to create new conversation, message not sent.");
+                    setIsSendingMessage(false);
+                }
+              } else {
+                handleSendMessage();
+              }
+            } else {
+              console.log("DIAG: Message input is empty or whitespace, not sending.");
+            }
+        } else {
+            console.log("DIAG: Already sending message, ignoring Enter key press.");
+        }
+      }
+    }
+  }, [messageInput, isSendingMessage, currentChatSessionId, handleSendMessage, handleNewConversation]);
 
 
   // --- USE EFFECTS ---
@@ -297,7 +836,7 @@ function TradingDashboardContent() {
       setChatSessions([]);
       console.log("DIAG: Chat sessions listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, currentChatSessionId, firestoreModule]);
+  }, [db, userId, currentChatSessionId, firestoreModule, setCurrentAlert]); // Added setCurrentAlert to deps
 
 
   useEffect(() => {
@@ -331,7 +870,7 @@ function TradingDashboardContent() {
       setChatMessages([]);
       console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, currentChatSessionId, firestoreModule]);
+  }, [db, userId, currentChatSessionId, firestoreModule, setCurrentAlert]); // Added setCurrentAlert to deps
 
   useEffect(() => {
     if (chatMessagesEndRef.current) {
@@ -363,14 +902,14 @@ function TradingDashboardContent() {
         setLoadingPrices(false);
       }
     }
-  }, []); // Dependencies will be added if this function uses external state/props
+  }, [setCurrentAlert, setLoadingPrices, setErrorPrices, setMarketPrices]); // Added all state setters to deps
 
   useEffect(() => {
     fetchMarketPricesData(true);
 
     const intervalId = setInterval(() => fetchMarketPricesData(false), 10000);
     return () => clearInterval(intervalId);
-  }, [fetchMarketPricesData]); // Dependency array for market data fetching
+  }, [fetchMarketPricesData]);
 
   const fetchAnalysisLivePrice = useCallback(async (pair: string) => {
     console.log("DIAG: Fetching analysis live price for:", pair, "from:", BACKEND_BASE_URL + "/all_market_prices");
@@ -393,7 +932,7 @@ function TradingDashboardContent() {
       console.error("DIAG: Error fetching live price for analysis page:", e);
       setCurrentLivePrice('Error');
     }
-  }, []); // Dependencies will be added if this function uses external state/props
+  }, [setCurrentLivePrice]); // Added setCurrentLivePrice to deps
 
   useEffect(() => {
     if (activeView === 'analysis') {
@@ -401,7 +940,7 @@ function TradingDashboardContent() {
       const intervalId = setInterval(() => fetchAnalysisLivePrice(analysisCurrencyPair), 10000);
       return () => clearInterval(intervalId);
     }
-  }, [activeView, analysisCurrencyPair, fetchAnalysisLivePrice]); // Dependency array for analysis live price
+  }, [activeView, analysisCurrencyPair, fetchAnalysisLivePrice]);
 
   useEffect(() => {
     console.log("DIAG: useEffect for trade logs listener triggered. db ready:", !!db, "userId ready:", !!userId, "firestoreModule:", !!firestoreModule);
@@ -440,7 +979,7 @@ function TradingDashboardContent() {
       setLoadingTradeLogs(false);
       console.log("DIAG: Trade logs listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, firestoreModule]); // Dependencies for trade logs listener
+  }, [db, userId, firestoreModule, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert]); // Added all state setters to deps
 
 
   return (
@@ -540,7 +1079,6 @@ function TradingDashboardContent() {
 
         <div className="flex-1 overflow-auto">
           <main className="flex-1 p-6">
-            {/* CustomAlert will be displayed here once currentAlert state is set */}
             {currentAlert && <CustomAlert message={currentAlert.message} type={currentAlert.type} onClose={() => setCurrentAlert(null)} />}
 
             {/* Dashboard View (Market Overview) */}
@@ -645,7 +1183,6 @@ function TradingDashboardContent() {
                   <div className="flex-1 flex flex-col relative overflow-hidden">
                     <div className="flex-1 overflow-y-auto px-6 py-4 custom-scrollbar" style={{ paddingBottom: '88px' }}>
                       <div className="space-y-4">
-                        {/* Chat messages will be rendered here */}
                         {chatMessages.map((msg) => (
                           <div
                             key={msg.id}
@@ -658,7 +1195,6 @@ function TradingDashboardContent() {
                                   : "bg-gray-700 text-gray-200"
                               } break-words`}
                             >
-                               {/* Only render text for now, full analysis/audio later */}
                                <div className="prose prose-invert prose-p:my-1 prose-li:my-1 prose-li:leading-tight prose-ul:my-1 text-sm leading-relaxed">
                                   <ReactMarkdown rehypePlugins={[rehypeRaw]}>
                                     {msg.text}
@@ -733,7 +1269,15 @@ function TradingDashboardContent() {
                         />
                         <button
                           className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
-                          onClick={async () => { /* Logic here later */ }}
+                          onClick={async () => {
+                            if (messageInput.trim()) {
+                                if (!currentChatSessionId) {
+                                    const newSessionId = await handleNewConversation();
+                                    if (!newSessionId) return;
+                                }
+                                handleSendMessage();
+                            }
+                          }}
                           disabled={isSendingMessage || !messageInput.trim()}
                         >
                           {isSendingMessage ? (
@@ -746,7 +1290,17 @@ function TradingDashboardContent() {
                           )}
                         </button>
                         <button
-                          onClick={async () => { /* Logic here later */ }}
+                          onClick={async () => {
+                            if (!currentChatSessionId) {
+                                console.log("DIAG: No current chat session, attempting to create new conversation before starting voice recording.");
+                                const newSessionId = await handleNewConversation();
+                                if (!newSessionId) {
+                                    console.error("DIAG: Failed to create new conversation, cannot start voice recording.");
+                                    return;
+                                }
+                            }
+                            isVoiceRecording ? handleStopVoiceRecording() : handleStartVoiceRecording();
+                          }}
                           className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
                           title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}
                           disabled={isSendingMessage}
@@ -1028,8 +1582,112 @@ function TradingDashboardContent() {
                         <span className="text-sm">Powered by Gemini AI</span>
                       </div>
                     </div>
-                    {/* AI Analysis results will be rendered here */}
-                    <p className="text-gray-400">Run an AI analysis to see detailed results here.</p>
+                    {isAnalyzing && (
+                      <div className="text-center p-10 text-gray-500">
+                        <div className="flex items-center justify-center mt-4">
+                          <svg className="animate-spin h-5 w-5 text-purple-400 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          <p className="mt-2 text-indigo-400">Analyzing...</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {!isAnalyzing && analysisResults ? (
+                      <div className="space-y-6">
+                        <div className="text-center p-4 bg-emerald-900/20 border border-emerald-500/30 rounded-lg">
+                          <div className="text-sm text-emerald-300 mb-2">CONFIDENCE SCORE</div>
+                          <div className="text-4xl font-bold text-emerald-400 mb-2">{analysisResults.confidence_score}</div>
+                          <div className="text-sm text-emerald-300">{analysisResults.signal_strength}</div>
+                        </div>
+
+                        <div className="p-4 bg-gray-700/30 rounded-lg">
+                          <h4 className="font-semibold text-white mb-3 flex items-center">
+                            <BarChart3 className="w-4 h-4 mr-2" />
+                            Market Summary
+                          </h4>
+                          <p className="text-gray-300 text-sm leading-relaxed">
+                            {analysisResults.market_summary}
+                          </p>
+                        </div>
+
+                        <div className="p-4 bg-blue-900/20 border border-blue-500/30 rounded-lg">
+                          <h4 className="font-semibold text-blue-300 mb-3 flex items-center">
+                            <TrendingUp className="w-4 h-4 mr-2" />
+                            AI Suggestion
+                          </h4>
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-300">Entry Type:</span>
+                              <span className="font-bold text-emerald-400">{analysisResults.ai_suggestion.entry_type}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-300">Recommended Action:</span>
+                              <span className="font-bold text-emerald-400">{analysisResults.ai_suggestion.recommended_action}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-gray-300">Position Size:</span>
+                                <span className="font-bold text-white">{analysisResults.ai_suggestion.position_size}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {analysisResults.ormcr_confirmation_status === "STRONG CONFIRMATION" && (
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-lg text-center">
+                              <div className="text-sm text-red-300 mb-1">Stop Loss</div>
+                              <div className="text-xl font-bold text-red-400">{analysisResults.stop_loss.price}</div>
+                              <div className="text-xs text-red-300">{analysisResults.stop_loss.percentage_change}</div>
+                            </div>
+                            <div className="p-4 bg-emerald-900/20 border border-emerald-500/30 rounded-lg text-center">
+                              <div className="text-sm text-emerald-300 mb-1">Take Profit 1</div>
+                              <div className="text-xl font-bold text-emerald-400">{analysisResults.take_profit_1.price}</div>
+                              <div className="text-xs text-emerald-300">{analysisResults.take_profit_1.percentage_change}</div>
+                            </div>
+                            <div className="p-4 bg-emerald-900/20 border border-emerald-500/30 rounded-lg text-center">
+                              <div className="text-sm text-emerald-300 mb-1">Take Profit 2</div>
+                              <div className="text-xl font-bold text-emerald-400">{analysisResults.take_profit_2.price}</div>
+                              <div className="text-xs text-emerald-300">{analysisResults.take_profit_2.percentage_change}</div>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="p-4 bg-gray-700/30 rounded-lg">
+                          <h4 className="font-semibold text-white mb-3">Technical Indicators Analysis</h4>
+                          {analysisResults.technical_indicators_analysis && (
+                            <div className="mt-2 text-sm text-gray-300">
+                              {analysisResults.technical_indicators_analysis}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="p-4 bg-gray-700/30 rounded-lg">
+                          <h4 className="font-semibold text-white mb-3">Next Step for User</h4>
+                          <p className="text-gray-300 text-sm leading-relaxed">
+                            {analysisResults.next_step_for_user}
+                          </p>
+                        </div>
+
+                        <div className="flex gap-4">
+                          <button
+                            onClick={handleChatAboutAnalysis}
+                            className="flex-1 inline-flex items-center justify-center px-5 py-3 rounded-lg font-semibold bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 transition-all duration-200"
+                          >
+                            <MessageCircle className="w-4 h-4 mr-2" />
+                            Chat About This Analysis
+                          </button>
+                          <button className="inline-flex items-center justify-center px-5 py-3 rounded-lg font-semibold bg-gray-700 text-gray-300 hover:bg-gray-600 transition-all duration-200">
+                            <Save className="w-4 h-4 mr-2" />
+                            Save Analysis
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center p-10 text-gray-500">
+                        <p>Run an AI analysis to see detailed results here.</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1043,8 +1701,70 @@ function TradingDashboardContent() {
                 {/* Add New Trade Form */}
                 <div className="bg-gray-800/40 rounded-xl shadow-lg border border-purple-500/30 p-6">
                   <h3 className="text-lg font-semibold text-purple-300 mb-4">Add New Trade</h3>
-                  {/* Trade form elements */}
-                  <p className="text-gray-400">Trade log form will be here.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Currency Pair</label>
+                      <select
+                        className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
+                        value={tradeLogForm.currencyPair}
+                        onChange={(e) => setTradeLogForm({ ...tradeLogForm, currencyPair: e.target.value })}
+                      >
+                        <option>BTC/USD</option>
+                        <option>ETH/USD</option>
+                        <option>ADA/USD</option>
+                        <option>SOL/USD</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Entry Price</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
+                        placeholder="e.g., 29500.00"
+                        value={tradeLogForm.entryPrice}
+                        onChange={(e) => setTradeLogForm({ ...tradeLogForm, entryPrice: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Exit Price</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
+                        placeholder="e.g., 29750.00"
+                        value={tradeLogForm.exitPrice}
+                        onChange={(e) => setTradeLogForm({ ...tradeLogForm, exitPrice: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Volume (Units)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
+                        placeholder="e.g., 0.1"
+                        value={tradeLogForm.volume}
+                        onChange={(e) => setTradeLogForm({ ...tradeLogForm, volume: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleAddTradeLog}
+                    disabled={isAddingTrade}
+                    className="mt-6 w-full inline-flex items-center justify-center px-5 py-3 rounded-lg font-semibold bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 transition-all duration-200 disabled:opacity-50"
+                  >
+                    {isAddingTrade ? (
+                      <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" />
+                    )}
+                    {isAddingTrade ? "Adding Trade..." : "Add Trade"}
+                  </button>
+                  {tradeLogError && <p className="text-red-500 text-sm mt-2">{tradeLogError}</p>}
                 </div>
 
                 {/* Trade Log Table */}
@@ -1121,8 +1841,30 @@ function TradingDashboardContent() {
                 {selectedTradeForJournal && (
                   <div className="bg-gray-800/40 rounded-xl shadow-lg border border-emerald-500/30 p-6">
                     <h3 className="text-lg font-semibold text-emerald-300 mb-4">Journal Entry for Trade ID: {selectedTradeForJournal.substring(0, 8)}...</h3>
-                    {/* Journal editor */}
-                    <p className="text-gray-400">Journal editor will be here.</p>
+                    <textarea
+                      className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md p-4 h-32 resize-y focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      placeholder="Write your thoughts, strategies, and lessons learned from this trade..."
+                      value={journalEntry}
+                      onChange={(e) => setJournalEntry(e.target.value)}
+                    ></textarea>
+                    <div className="flex justify-end space-x-3 mt-4">
+                      <button
+                        onClick={() => {
+                          setJournalEntry("");
+                          setSelectedTradeForJournal(null);
+                        }}
+                        className="px-4 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleSaveJournalEntry}
+                        disabled={isSavingJournal}
+                        className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                      >
+                        {isSavingJournal ? "Saving..." : "Save Journal Entry"}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

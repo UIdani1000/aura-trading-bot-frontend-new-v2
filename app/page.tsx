@@ -230,7 +230,7 @@ function TradingDashboardContent() {
     if (!db || !userId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
       setCurrentAlert({ message: "Chat service not ready. Please wait a moment for authentication to complete.", type: "warning" });
       console.warn("DIAG: Attempted to create new conversation, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
-      return;
+      return null; // Return null if not ready
     }
     console.log("DIAG: Creating new chat session...");
     try {
@@ -241,13 +241,15 @@ function TradingDashboardContent() {
         createdAt: firestoreModule.serverTimestamp(),
         lastMessageText: "No messages yet.",
       });
-      setCurrentChatSessionId(newSessionRef.id);
+      // DO NOT set currentChatSessionId here directly for async operations like send message
+      // It will be set by the onSnapshot listener from chatSessions state update.
       setMessageInput('');
       setChatMessages([]);
       setIsChatHistoryMobileOpen(false);
       setCurrentAlert({ message: "New conversation started! Type your first message.", type: "success" });
       console.log("DIAG: New chat session created with ID:", newSessionRef.id);
 
+      // We add the initial greeting here AFTER session is created
       const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${newSessionRef.id}/messages`);
       const initialGreeting = {
         id: crypto.randomUUID(),
@@ -257,10 +259,11 @@ function TradingDashboardContent() {
       };
       await firestoreModule.addDoc(messagesCollectionRef, initialGreeting);
       console.log("DIAG: Initial greeting added to new chat session.");
-
+      return newSessionRef.id; // Return the new session ID
     } catch (error: any) {
       console.error("DIAG: Error creating new conversation:", error);
       setCurrentAlert({ message: `Failed to start new conversation: ${error.message}`, type: "error" });
+      return null;
     }
   }, [db, userId, aiAssistantName, isAuthReady, isFirebaseServicesReady, firestoreModule]);
 
@@ -333,7 +336,7 @@ function TradingDashboardContent() {
     const messageType = isVoice ? 'audio' : 'text';
 
     setIsSendingMessage(true);
-    setMessageInput("");
+    setMessageInput(""); // Clear input immediately, will be re-populated for voice if needed
 
     try {
       const userMessage = { id: crypto.randomUUID(), sender: "user", text: messageContent, timestamp: firestoreModule.serverTimestamp(), type: messageType };
@@ -345,10 +348,24 @@ function TradingDashboardContent() {
       console.log("DIAG: User message added to Firestore.");
 
       const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
+      
+      // Automatic Conversation Naming Logic:
+      // If this is the first user message in a new session (determined by message count and session state)
+      // or if the session name is still generic ("New Chat..."), update the session name.
+      const isFirstMessageInNewSession = chatMessages.length === 1 && chatMessages[0].sender === 'ai'; // Only initial greeting
+      const currentSession = chatSessions.find((s: ChatSession) => s.id === currentChatSessionId);
+      const isSessionNameGeneric = currentSession && currentSession.name.startsWith("New Chat");
+
+      let newSessionName = currentSession?.name || "Untitled Chat"; // Default
+      if (isFirstMessageInNewSession || isSessionNameGeneric) {
+          // Take first 30 chars of the user's message as the session name
+          newSessionName = userMessage.text.substring(0, 30) + (userMessage.text.length > 30 ? '...' : '');
+      }
+
       await firestoreModule.setDoc(sessionDocRef, {
         lastMessageText: userMessage.text,
         lastMessageTimestamp: userMessage.timestamp,
-        name: chatMessages.length === 0 ? userMessage.text.substring(0, 30) + (userMessage.text.length > 30 ? '&hellip;' : '') : (chatSessions.find((s: ChatSession) => s.id === currentChatSessionId)?.name || "Untitled Chat"),
+        name: newSessionName, // Update the session name here
       }, { merge: true });
 
       const payloadHistory = chatMessages
@@ -402,7 +419,7 @@ function TradingDashboardContent() {
       mediaRecorderRef.current.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         console.log("DIAG: Audio recording stopped, blob created:", audioBlob);
-        setMessageInput("[Voice Message]");
+        setMessageInput("[Voice Message]"); // Set placeholder for voice message
         await handleSendMessage(true, audioBlob);
         audioChunksRef.current = [];
       };
@@ -614,6 +631,44 @@ function TradingDashboardContent() {
     }
   };
 
+  // --- NEW KEYDOWN HANDLER FOR CHAT INPUT ---
+  const handleChatInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    console.log("DIAG: KeyDown detected:", e.key, "Shift pressed:", e.shiftKey, "isSendingMessage:", isSendingMessage);
+
+    if (e.key === 'Enter') {
+      if (e.shiftKey) {
+        // Shift + Enter: Allow default behavior (new line in textarea)
+        console.log("DIAG: Shift + Enter detected. Allowing default (new line).");
+        // No e.preventDefault() here.
+      } else {
+        // Enter without Shift: Attempt to send message
+        e.preventDefault(); // PREVENT default Enter behavior (e.g., new line or form submission)
+        console.log("DIAG: Enter (no Shift) detected. Preventing default, attempting to send message.");
+        if (messageInput.trim()) { // Only send if the message is not just whitespace
+          // If no current chat session, create one first
+          if (!currentChatSessionId) {
+            console.log("DIAG: No current chat session, attempting to create new conversation before sending.");
+            const newSessionId = await handleNewConversation(); // Await creation and get ID
+            if (newSessionId) {
+                // If a new session was created successfully, attempt to send message
+                // This will rely on handleSendMessage picking up currentChatSessionId from state quickly.
+                // For very rapid key presses, a ref or explicit ID passing might be needed,
+                // but this generally works due to React's rendering cycle.
+                handleSendMessage();
+            } else {
+                console.error("DIAG: Failed to create new conversation, message not sent.");
+                setIsSendingMessage(false); // Ensure sending state is reset
+            }
+          } else {
+            handleSendMessage();
+          }
+        } else {
+          console.log("DIAG: Message input is empty or whitespace, not sending.");
+        }
+      }
+    }
+  }, [messageInput, isSendingMessage, currentChatSessionId, handleSendMessage, handleNewConversation]);
+
 
   // --- USE EFFECTS ---
 
@@ -635,6 +690,7 @@ function TradingDashboardContent() {
         })) as ChatSession[];
         setChatSessions(sessions);
 
+        // Set currentChatSessionId if not already set or if the current one was deleted
         if (!currentChatSessionId || !sessions.some((s: ChatSession) => s.id === currentChatSessionId)) {
           if (sessions.length > 0) {
             setCurrentChatSessionId(sessions[0].id);
@@ -972,6 +1028,8 @@ function TradingDashboardContent() {
                   <button
                       className="md:hidden text-gray-400 hover:text-white"
                       onClick={() => {
+                        // This button behavior is to close the chat in mobile, effectively switching to no session.
+                        // A new conversation would be started by the plus button or typing in empty state.
                         if (currentChatSessionId) {
                             setCurrentChatSessionId(null);
                             setChatMessages([]);
@@ -1061,23 +1119,20 @@ function TradingDashboardContent() {
                     {/* Input area (fixed at bottom) */}
                     <div className="absolute bottom-0 left-0 right-0 p-4 bg-gray-900 border-t border-gray-800 z-10">
                       <div className="relative flex items-center w-full bg-gray-800 rounded-lg border border-gray-700 pr-2">
-                        <input
-                          type="text"
-                          placeholder="Ask anything"
-                          className="flex-1 bg-transparent text-white rounded-lg px-4 py-3 focus:outline-none"
+                        {/* CONVERTED FROM INPUT TO TEXTAREA */}
+                        <textarea
+                          placeholder="Ask anything (Shift + Enter for new line)"
+                          className="flex-1 bg-transparent text-white rounded-lg px-4 py-3 focus:outline-none resize-y min-h-[40px] max-h-[120px] custom-scrollbar"
                           value={messageInput}
                           onChange={(e) => setMessageInput(e.target.value)}
-                          onKeyPress={(e) => {
-                            if (e.key === "Enter" && !isSendingMessage) {
-                              handleSendMessage();
-                            }
-                          }}
+                          onKeyDown={handleChatInputKeyDown} // Using the unified handler
+                          rows={Math.min(5, (messageInput.split('\n').length || 1))} // Dynamic rows
                           disabled={isSendingMessage}
                         />
                         <button
                           className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
-                          onClick={() => handleSendMessage()}
-                          disabled={isSendingMessage}
+                          onClick={() => messageInput.trim() && handleSendMessage()} // Call directly, check for empty
+                          disabled={isSendingMessage || !messageInput.trim()} // Disable if input is empty
                         >
                           {isSendingMessage ? (
                             <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -1108,33 +1163,27 @@ function TradingDashboardContent() {
 
                     <div className="relative w-full max-w-xl mb-4">
                       <div className="relative flex items-center w-full bg-gray-800 rounded-lg border border-gray-700 pr-2">
-                        <input
-                          type="text"
-                          placeholder="Ask anything"
-                          className="flex-1 bg-transparent text-white rounded-lg px-4 py-3 focus:outline-none"
+                        {/* CONVERTED FROM INPUT TO TEXTAREA */}
+                        <textarea
+                          placeholder="Ask anything (Shift + Enter for new line)"
+                          className="flex-1 bg-transparent text-white rounded-lg px-4 py-3 focus:outline-none resize-y min-h-[40px] max-h-[120px] custom-scrollbar"
                           value={messageInput}
                           onChange={(e) => setMessageInput(e.target.value)}
-                          onKeyPress={(e) => {
-                            if (e.key === "Enter" && !isSendingMessage) {
-                              if (messageInput.trim()) {
-                                handleNewConversation().then(() => {
-                                  handleSendMessage();
-                                });
-                              }
-                            }
-                          }}
+                          onKeyDown={handleChatInputKeyDown} // Using the unified handler
+                          rows={Math.min(5, (messageInput.split('\n').length || 1))} // Dynamic rows
                           disabled={isSendingMessage}
                         />
                         <button
                           className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
-                          onClick={() => {
+                          onClick={async () => {
                             if (messageInput.trim()) {
-                              handleNewConversation().then(() => {
-                                handleSendMessage();
-                              });
+                                const newSessionId = await handleNewConversation(); // Await creation and get ID
+                                if (newSessionId) {
+                                    handleSendMessage(); // Send message after session is created
+                                }
                             }
                           }}
-                          disabled={isSendingMessage}
+                          disabled={isSendingMessage || !messageInput.trim()} // Disable if input is empty
                         >
                           {isSendingMessage ? (
                             <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

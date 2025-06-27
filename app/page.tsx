@@ -151,6 +151,35 @@ const CustomAlert: React.FC<{ message: string; type: 'success' | 'error' | 'warn
   );
 };
 
+// Custom Confirmation Modal component (NEW)
+const CustomConfirmModal: React.FC<{
+  message: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}> = ({ message, onConfirm, onCancel }) => {
+  return (
+    <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
+      <div className="bg-gray-800 rounded-lg p-6 shadow-xl border border-purple-500/30 max-w-sm mx-auto">
+        <p className="text-white text-lg mb-6">{message}</p>
+        <div className="flex justify-end space-x-4">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
+          >
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 // !!! THIS IS THE MAIN EXPORT FOR YOUR PAGE !!!
 export default function TradingDashboardWrapper() {
@@ -233,6 +262,11 @@ function TradingDashboardContent() {
   const [isSavingJournal, setIsSavingJournal] = useState(false)
   const [tradeLogError, setTradeLogError] = useState<string | null>(null);
 
+  // Confirmation Modal states (NEW)
+  const [showConfirmDeleteModal, setShowConfirmDeleteModal] = useState(false);
+  const [tradeIdToDelete, setTradeIdToDelete] = useState<string | null>(null);
+
+
   // Settings states
   const [backendUrlSetting] = useState(BACKEND_BASE_URL);
   const [appIdSetting] = useState(appId);
@@ -276,7 +310,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Failed to start new conversation: ${error.message}`, type: "error" });
       return null;
     }
-  }, [db, userId, aiAssistantName, firestoreModule, setChatMessages, setMessageInput, setIsChatHistoryMobileOpen, setCurrentAlert]);
+  }, [db, userId, firestoreModule, setChatMessages, setMessageInput, setIsChatHistoryMobileOpen, setCurrentAlert, appId, aiAssistantName]); // Removed aiAssistantName from deps if it was a constant
 
 
   const handleSwitchConversation = (sessionId: string) => {
@@ -297,7 +331,7 @@ function TradingDashboardContent() {
       timestamp: firestoreModule?.serverTimestamp(),
     };
     if (db && userId && currentChatSessionId && firestoreModule) {
-      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), analysisPendingMessage); // FIX: Added void
+      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), analysisPendingMessage);
     } else {
       setChatMessages((prevMessages) => [...prevMessages, analysisPendingMessage]);
     }
@@ -325,7 +359,7 @@ function TradingDashboardContent() {
         const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
         const querySnapshot = await firestoreModule.getDocs(q);
         querySnapshot.forEach(async (doc: any) => {
-          void await firestoreModule.deleteDoc(doc.ref); // FIX: Added void
+          void await firestoreModule.deleteDoc(doc.ref);
         });
       } else {
         setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
@@ -342,7 +376,7 @@ function TradingDashboardContent() {
       };
 
       if (db && userId && currentChatSessionId && firestoreModule) {
-        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiAnalysisMessage); // FIX: Added void
+        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiAnalysisMessage);
         console.log("DIAG: AI analysis message added to Firestore.");
       } else {
         setChatMessages((prevMessages) => [...prevMessages, aiAnalysisMessage]);
@@ -357,7 +391,7 @@ function TradingDashboardContent() {
         const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
         const querySnapshot = await firestoreModule.getDocs(q);
         querySnapshot.forEach(async (doc: any) => {
-          void await firestoreModule.deleteDoc(doc.ref); // FIX: Added void
+          void await firestoreModule.deleteDoc(doc.ref);
         });
       } else {
         setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
@@ -372,13 +406,13 @@ function TradingDashboardContent() {
         timestamp: firestoreModule ? firestoreModule.serverTimestamp() : null,
       };
       if (db && userId && currentChatSessionId && firestoreModule) {
-        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage); // FIX: Added void
+        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage);
       } else {
         setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
       }
       setCurrentAlert({ message: `Analysis failed: ${error.message || "Unknown error"}. Check backend deployment.`, type: "error" });
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, BACKEND_BASE_URL]); // Removed setCurrentAlert, added BACKEND_BASE_URL
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, BACKEND_BASE_URL, appId]);
 
 
   const fetchBackendChatResponse = useCallback(async (requestBody: any) => {
@@ -400,7 +434,7 @@ function TradingDashboardContent() {
       if (aiResponseText.includes("ORMCR_ANALYSIS_REQUESTED:")) {
         const messageParts = aiResponseText.split("ORMCR_ANALYSIS_REQUESTED:");
         const symbol = messageParts[1].trim();
-        void await handleORMCRAnalysisRequest(symbol); // FIX: Added void
+        void await handleORMCRAnalysisRequest(symbol);
       } else {
         const aiMessage: ChatMessage = {
           id: crypto.randomUUID(),
@@ -412,11 +446,11 @@ function TradingDashboardContent() {
 
         console.log("DIAG: AI response received:", data);
         if (db && userId && currentChatSessionId && firestoreModule) {
-          void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiMessage); // FIX: Added void
+          void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiMessage);
           console.log("DIAG: AI response added to Firestore.");
 
           const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
-          void await firestoreModule.setDoc(sessionDocRef, { // FIX: Added void
+          void await firestoreModule.setDoc(sessionDocRef, {
             lastMessageText: aiMessage.text,
             lastMessageTimestamp: aiMessage.timestamp,
           }, { merge: true });
@@ -433,7 +467,7 @@ function TradingDashboardContent() {
         type: 'text'
       };
       if (db && userId && currentChatSessionId && firestoreModule) {
-        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage); // FIX: Added void
+        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage);
       } else {
         setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
       }
@@ -441,7 +475,7 @@ function TradingDashboardContent() {
       setIsSendingMessage(false);
       console.log("DIAG: Backend fetch finished.");
     }
-  }, [appId, BACKEND_BASE_URL, db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest, setIsSendingMessage]); // Removed BACKEND_BASE_URL, setCurrentAlert, setIsSendingMessage
+  }, [appId, db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest, setIsSendingMessage, BACKEND_BASE_URL]);
 
 
   const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {
@@ -473,7 +507,7 @@ function TradingDashboardContent() {
       console.log("DIAG: User message prepared:", userMessage);
 
       console.log("DIAG: Adding user message to Firestore for session:", currentChatSessionId);
-      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), userMessage); // FIX: Added void
+      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), userMessage);
       console.log("DIAG: User message added to Firestore.");
 
       const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
@@ -487,7 +521,7 @@ function TradingDashboardContent() {
           newSessionName = userMessage.text.substring(0, 30) + (userMessage.text.length > 30 ? '...' : '');
       }
 
-      void await firestoreModule.setDoc(sessionDocRef, { // FIX: Added void
+      void await firestoreModule.setDoc(sessionDocRef, {
         lastMessageText: userMessage.text,
         lastMessageTimestamp: userMessage.timestamp,
         name: newSessionName,
@@ -513,10 +547,10 @@ function TradingDashboardContent() {
         reader.onloadend = async () => {
           const base64Audio = (reader.result as string).split(',')[1];
           requestBody.audio_data = base64Audio;
-          void await fetchBackendChatResponse(requestBody); // FIX: Added void
+          void await fetchBackendChatResponse(requestBody);
         };
       } else {
-        void await fetchBackendChatResponse(requestBody); // FIX: Added void
+        void await fetchBackendChatResponse(requestBody);
       }
 
     } catch (error: any) {
@@ -547,7 +581,7 @@ function TradingDashboardContent() {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         console.log("DIAG: Audio recording stopped, blob created:", audioBlob);
         setMessageInput("[Voice Message]");
-        void await handleSendMessage(true, audioBlob); // FIX: Added void
+        void await handleSendMessage(true, audioBlob);
         audioChunksRef.current = [];
         stream.getTracks().forEach(track => track.stop());
       };
@@ -679,7 +713,7 @@ function TradingDashboardContent() {
         timestamp: firestoreModule.serverTimestamp(),
       };
 
-      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`), tradeLogEntry); // FIX: Added void
+      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`), tradeLogEntry);
 
       setCurrentAlert({ message: "Trade log added successfully!", type: "success" });
       setTradeLogForm({
@@ -715,7 +749,7 @@ function TradingDashboardContent() {
 
     try {
       const tradeDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, selectedTradeForJournal);
-      void await firestoreModule.updateDoc(tradeDocRef, { // FIX: Added void
+      void await firestoreModule.updateDoc(tradeDocRef, {
         journalEntry: journalEntry,
       });
 
@@ -732,7 +766,17 @@ function TradingDashboardContent() {
     }
   };
 
-  const handleDeleteTradeLog = async (tradeId: string) => {
+  // Handler to trigger the custom confirmation modal (NEW)
+  const handleDeleteTradeLogClick = (tradeId: string) => {
+    setTradeIdToDelete(tradeId);
+    setShowConfirmDeleteModal(true);
+  };
+
+  // Actual deletion handler (called by custom modal) (NEW)
+  const confirmDeleteTradeLog = async () => {
+    setShowConfirmDeleteModal(false); // Close modal
+    if (!tradeIdToDelete) return;
+
     if (!db || !userId || !firestoreModule) {
       setCurrentAlert({ message: "Trade log deletion service not ready. Please wait a moment for authentication to complete.", type: "warning" });
       console.warn("DIAG: Attempted to delete trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
@@ -740,18 +784,23 @@ function TradingDashboardContent() {
     }
 
     setTradeLogError(null);
-    if (window.confirm("Are you sure you want to delete this trade log?")) {
-      try {
-        const tradeDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, tradeId);
-        void await firestoreModule.deleteDoc(tradeDocRef); // FIX: Added void
-        setCurrentAlert({ message: "Trade log deleted successfully!", type: "success" });
-        console.log("DIAG: Trade log deleted:", tradeId);
-      } catch (error: any) {
-        console.error("DIAG: Error deleting trade log:", error);
-        setTradeLogError(error.message || "Failed to delete trade log.");
-        setCurrentAlert({ message: `Failed to delete trade log: ${error.message}`, type: "error" });
-      }
+    try {
+      const tradeDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, tradeIdToDelete);
+      void await firestoreModule.deleteDoc(tradeDocRef);
+      setCurrentAlert({ message: "Trade log deleted successfully!", type: "success" });
+      console.log("DIAG: Trade log deleted:", tradeIdToDelete);
+      setTradeIdToDelete(null); // Clear the ID after deletion
+    } catch (error: any) {
+      console.error("DIAG: Error deleting trade log:", error);
+      setTradeLogError(error.message || "Failed to delete trade log.");
+      setCurrentAlert({ message: `Failed to delete trade log: ${error.message}`, type: "error" });
     }
+  };
+
+  // Cancel deletion handler (NEW)
+  const cancelDeleteTradeLog = () => {
+    setShowConfirmDeleteModal(false);
+    setTradeIdToDelete(null);
   };
 
 
@@ -770,13 +819,13 @@ function TradingDashboardContent() {
                 console.log("DIAG: No current chat session, attempting to create new conversation before sending.");
                 const newSessionId = await handleNewConversation();
                 if (newSessionId) {
-                    void await handleSendMessage(); // FIX: Added void
+                    void await handleSendMessage();
                 } else {
                     console.error("DIAG: Failed to create new conversation, message not sent.");
-                    setIsSendingMessage(false);
+                    // No need to setIsSendingMessage(false) here, as it's handled in handleSendMessage's finally block
                 }
               } else {
-                void await handleSendMessage(); // FIX: Added void
+                void await handleSendMessage();
               }
             } else {
               console.log("DIAG: Message input is empty or whitespace, not sending.");
@@ -786,7 +835,7 @@ function TradingDashboardContent() {
         }
       }
     }
-  }, [messageInput, isSendingMessage, currentChatSessionId, handleSendMessage, handleNewConversation, setIsSendingMessage]);
+  }, [messageInput, isSendingMessage, currentChatSessionId, handleSendMessage, handleNewConversation]);
 
 
   // --- USE EFFECTS ---
@@ -829,7 +878,7 @@ function TradingDashboardContent() {
       setChatSessions([]);
       console.log("DIAG: Chat sessions listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setChatSessions, setCurrentChatSessionId, setCurrentAlert]);
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatSessions, setCurrentChatSessionId, setCurrentAlert, appId]); // Added appId to deps
 
 
   useEffect(() => {
@@ -863,7 +912,7 @@ function TradingDashboardContent() {
       setChatMessages([]);
       console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert]);
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, appId]);
 
   useEffect(() => {
     if (chatMessagesEndRef.current) {
@@ -895,12 +944,12 @@ function TradingDashboardContent() {
         setLoadingPrices(false);
       }
     }
-  }, [setLoadingPrices, setErrorPrices, setMarketPrices]);
+  }, [setLoadingPrices, setErrorPrices, setMarketPrices, BACKEND_BASE_URL]); // Removed BACKEND_BASE_URL as it is a constant
 
   useEffect(() => {
-    void fetchMarketPricesData(true); // FIX: Added void
+    void fetchMarketPricesData(true);
 
-    const intervalId = setInterval(() => void fetchMarketPricesData(false), 10000); // FIX: Added void
+    const intervalId = setInterval(() => void fetchMarketPricesData(false), 10000);
     return () => clearInterval(intervalId);
   }, [fetchMarketPricesData]);
 
@@ -925,12 +974,12 @@ function TradingDashboardContent() {
       console.error("DIAG: Error fetching live price for analysis page:", e);
       setCurrentLivePrice('Error');
     }
-  }, [setCurrentLivePrice]);
+  }, [setCurrentLivePrice, BACKEND_BASE_URL]); // Removed BACKEND_BASE_URL as it is a constant
 
   useEffect(() => {
     if (activeView === 'analysis') {
-      void fetchAnalysisLivePrice(analysisCurrencyPair); // FIX: Added void
-      const intervalId = setInterval(() => void fetchAnalysisLivePrice(analysisCurrencyPair), 10000); // FIX: Added void
+      void fetchAnalysisLivePrice(analysisCurrencyPair);
+      const intervalId = setInterval(() => void fetchAnalysisLivePrice(analysisCurrencyPair), 10000);
       return () => clearInterval(intervalId);
     }
   }, [activeView, analysisCurrencyPair, fetchAnalysisLivePrice]);
@@ -972,7 +1021,7 @@ function TradingDashboardContent() {
       setLoadingTradeLogs(false);
       console.log("DIAG: Trade logs listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, firestoreModule, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert]);
+  }, [db, userId, firestoreModule, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert, appId]);
 
 
   return (
@@ -1073,6 +1122,13 @@ function TradingDashboardContent() {
         <div className="flex-1 overflow-auto">
           <main className="flex-1 p-6">
             {currentAlert && <CustomAlert message={currentAlert.message} type={currentAlert.type} onClose={() => setCurrentAlert(null)} />}
+            {showConfirmDeleteModal && (
+                <CustomConfirmModal
+                    message="Are you sure you want to delete this trade log? This action cannot be undone."
+                    onConfirm={confirmDeleteTradeLog}
+                    onCancel={cancelDeleteTradeLog}
+                />
+            )}
 
             {/* Dashboard View (Market Overview) */}
             {activeView === "dashboard" && (
@@ -1219,7 +1275,7 @@ function TradingDashboardContent() {
                         />
                         <button
                           className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
-                          onClick={() => void handleSendMessage(false)} // FIX: Added void
+                          onClick={() => void handleSendMessage(false)}
                           disabled={isSendingMessage || !messageInput.trim()}
                         >
                           {isSendingMessage ? (
@@ -1232,7 +1288,13 @@ function TradingDashboardContent() {
                           )}
                         </button>
                         <button
-                          onClick={isVoiceRecording ? handleStopVoiceRecording : handleStartVoiceRecording}
+                          onClick={async () => { // Refactored this onClick
+                            if (isVoiceRecording) {
+                                void handleStopVoiceRecording();
+                            } else {
+                                void await handleStartVoiceRecording();
+                            }
+                          }}
                           className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
                           title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}
                           disabled={isSendingMessage || !currentChatSessionId}
@@ -1268,7 +1330,7 @@ function TradingDashboardContent() {
                                     const newSessionId = await handleNewConversation();
                                     if (!newSessionId) return;
                                 }
-                                void await handleSendMessage(); // FIX: Added void
+                                void await handleSendMessage();
                             }
                           }}
                           disabled={isSendingMessage || !messageInput.trim()}
@@ -1283,7 +1345,7 @@ function TradingDashboardContent() {
                           )}
                         </button>
                         <button
-                          onClick={async () => {
+                          onClick={async () => { // Refactored this onClick
                             if (!currentChatSessionId) {
                                 console.log("DIAG: No current chat session, attempting to create new conversation before starting voice recording.");
                                 const newSessionId = await handleNewConversation();
@@ -1292,7 +1354,11 @@ function TradingDashboardContent() {
                                     return;
                                 }
                             }
-                            isVoiceRecording ? void handleStopVoiceRecording() : void handleStartVoiceRecording(); // FIX: Added void
+                            if (isVoiceRecording) {
+                                void handleStopVoiceRecording();
+                            } else {
+                                void await handleStartVoiceRecording();
+                            }
                           }}
                           className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
                           title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}
@@ -1650,7 +1716,9 @@ function TradingDashboardContent() {
                           <h4 className="font-semibold text-white mb-3">Technical Indicators Analysis</h4>
                           {analysisResults.technical_indicators_analysis && (
                             <div className="mt-2 text-sm text-gray-300">
-                              {analysisResults.technical_indicators_analysis}
+                              <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+                                {analysisResults.technical_indicators_analysis}
+                              </ReactMarkdown>
                             </div>
                           )}
                         </div>
@@ -1658,7 +1726,9 @@ function TradingDashboardContent() {
                         <div className="p-4 bg-gray-700/30 rounded-lg">
                           <h4 className="font-semibold text-white mb-3">Next Step for User</h4>
                           <p className="text-gray-300 text-sm leading-relaxed">
-                            {analysisResults.next_step_for_user}
+                            <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+                                {analysisResults.next_step_for_user}
+                            </ReactMarkdown>
                           </p>
                         </div>
 
@@ -1815,7 +1885,7 @@ function TradingDashboardContent() {
                                   <Edit2 className="w-4 h-4" />
                                 </button>
                                 <button
-                                  onClick={() => handleDeleteTradeLog(trade.id)}
+                                  onClick={() => handleDeleteTradeLogClick(trade.id)} // Changed to use new handler (NEW)
                                   className="text-red-400 hover:text-red-500"
                                   title="Delete Trade"
                                 >

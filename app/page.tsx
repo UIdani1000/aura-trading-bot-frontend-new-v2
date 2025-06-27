@@ -58,7 +58,7 @@ console.log("DIAG: Initial BACKEND_BASE_URL (from env or fallback):", BACKEND_BA
 // --- END: Backend URL ---
 
 // Global variables for Firebase configuration (using process.env for Vercel deployment)
-const appId = process.env.NEXT_PUBLIC_APP_ID || 'default-app-id';
+const appId = process.env.NEXT_PUBLIC_APP_ID || 'default-app-id'; // Keep this here for direct access within the component where needed.
 console.log("DIAG: Initial appId (from environment or fallback):", appId);
 
 
@@ -231,7 +231,7 @@ function TradingDashboardContent() {
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [currentChatSessionId, setCurrentChatSessionId] = useState<string | null>(null);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null); // CORRECTED: Initialized with null
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
   const [aiAssistantName] = useState("Aura");
@@ -264,7 +264,7 @@ function TradingDashboardContent() {
 
   // Trade Log states
   const [tradeLogs, setTradeLogs] = useState<TradeLogEntry[]>([])
-  const [loadingTradeLogs, setLoadingTradeLogs] = useState(true)
+  const [loadingTradeLogs, setLoadingTradeLogs] = true
   const [tradeLogForm, setTradeLogForm] = useState({
     currencyPair: "BTC/USD",
     entryPrice: "",
@@ -285,7 +285,8 @@ function TradingDashboardContent() {
 
   // Settings states
   const [backendUrlSetting] = useState(BACKEND_BASE_URL);
-  const [appIdSetting] = useState(appId);
+  // This const `appId` is already derived from `process.env.NEXT_PUBLIC_APP_ID` at the top of the file.
+  // We can display it directly from the `appId` constant declared at the top of the file.
 
 
   // --- HANDLERS ---
@@ -298,6 +299,7 @@ function TradingDashboardContent() {
     }
     console.log("DIAG: Creating new chat session...");
     try {
+      // Use the appId constant which is read from process.env.NEXT_PUBLIC_APP_ID
       const sessionsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions`);
       const newSessionRef = await addDoc(sessionsCollectionRef, {
         name: "New Chat " + new Date().toLocaleString().split(',')[0],
@@ -326,7 +328,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Failed to start new conversation: ${error.message}`, type: "error" });
       return null;
     }
-  }, [db, userId, isAuthReady, setChatMessages, setMessageInput, setIsChatHistoryMobileOpen, setCurrentAlert, aiAssistantName]);
+  }, [db, userId, isAuthReady, setChatMessages, setMessageInput, setIsChatHistoryMobileOpen, setCurrentAlert, aiAssistantName, appId]);
 
 
   const handleSwitchConversation = (sessionId: string) => {
@@ -428,7 +430,7 @@ function TradingDashboardContent() {
       }
       setCurrentAlert({ message: `Analysis failed: ${error.message || "Unknown error"}. Check backend deployment.`, type: "error" });
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert]); // REMOVED BACKEND_BASE_URL and appId from deps
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, appId, BACKEND_BASE_URL]);
 
 
   const fetchBackendChatResponse = useCallback(async (requestBody: any) => {
@@ -491,7 +493,7 @@ function TradingDashboardContent() {
       setIsSendingMessage(false);
       console.log("DIAG: Backend fetch finished.");
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest, setIsSendingMessage]); // Removed BACKEND_BASE_URL and appId from deps as they are constants
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest, setIsSendingMessage, appId, BACKEND_BASE_URL]);
 
 
   const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {
@@ -512,15 +514,20 @@ function TradingDashboardContent() {
     setMessageInput("");
 
     try {
+      // CORRECTED: Conditionally add audioUrl only if it's a voice message AND audioBlob exists
       const userMessage: ChatMessage = {
         id: crypto.randomUUID(),
         sender: "user",
         text: messageContent,
         timestamp: serverTimestamp(),
         type: messageType,
-        audioUrl: isVoice && audioBlob ? URL.createObjectURL(audioBlob) : undefined
       };
+
+      if (isVoice && audioBlob) {
+        userMessage.audioUrl = URL.createObjectURL(audioBlob);
+      }
       console.log("DIAG: User message prepared:", userMessage);
+
 
       console.log("DIAG: Adding user message to Firestore for session:", currentChatSessionId);
       void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), userMessage);
@@ -574,7 +581,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Error sending message: ${error.message || "Unknown error"}`, type: "error" });
       setIsSendingMessage(false);
     }
-  }, [messageInput, db, userId, currentChatSessionId, isAuthReady, chatMessages, chatSessions, fetchBackendChatResponse, setMessageInput, setCurrentAlert, setIsSendingMessage]); // Removed appId from deps
+  }, [messageInput, db, userId, currentChatSessionId, isAuthReady, chatMessages, chatSessions, fetchBackendChatResponse, setMessageInput, setCurrentAlert, setIsSendingMessage, appId]);
 
 
   const handleStartVoiceRecording = useCallback(async () => {
@@ -893,7 +900,7 @@ function TradingDashboardContent() {
       setChatSessions([]);
       console.log("DIAG: Chat sessions listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, ")");
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatSessions, setCurrentChatSessionId, setCurrentAlert]); // REMOVED appId from deps
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatSessions, setCurrentChatSessionId, setCurrentAlert, appId]);
 
 
   useEffect(() => {
@@ -927,7 +934,7 @@ function TradingDashboardContent() {
       setChatMessages([]);
       console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isAuthReady:", isAuthReady, ")");
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert]); // REMOVED appId from deps
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, appId]);
 
   useEffect(() => {
     if (chatMessagesEndRef.current) {
@@ -959,7 +966,7 @@ function TradingDashboardContent() {
         setLoadingPrices(false);
       }
     }
-  }, [setLoadingPrices, setErrorPrices, setMarketPrices]); // REMOVED BACKEND_BASE_URL from deps
+  }, [setLoadingPrices, setErrorPrices, setMarketPrices, BACKEND_BASE_URL]);
 
 
   useEffect(() => {
@@ -990,7 +997,7 @@ function TradingDashboardContent() {
       console.error("DIAG: Error fetching live price for analysis page:", e);
       setCurrentLivePrice('Error');
     }
-  }, [setCurrentLivePrice]); // REMOVED BACKEND_BASE_URL from deps
+  }, [setCurrentLivePrice, BACKEND_BASE_URL]);
 
   useEffect(() => {
     if (activeView === 'analysis') {
@@ -1037,7 +1044,7 @@ function TradingDashboardContent() {
       setLoadingTradeLogs(false);
       console.log("DIAG: Trade logs listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, ")");
     }
-  }, [db, userId, isAuthReady, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert]); // REMOVED appId from deps
+  }, [db, userId, isAuthReady, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert, appId]);
 
 
   return (
@@ -1932,7 +1939,7 @@ function TradingDashboardContent() {
                           setJournalEntry("");
                           setSelectedTradeForJournal(null);
                         }}
-                        className="px-4 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+                        className="px-4 py-2 rounded-lg bg-gray-700/50 text-gray-300 hover:bg-gray-600 transition-colors"
                       >
                         Cancel
                       </button>
@@ -1974,7 +1981,7 @@ function TradingDashboardContent() {
                         type="text"
                         readOnly
                         className="w-full bg-gray-800/50 border border-gray-600 text-gray-400 rounded-md px-4 py-2 cursor-not-allowed"
-                        value={appIdSetting}
+                        value={appId} {/* Displaying the actual appId that's read from env */}
                       />
                       <p className="text-xs text-gray-500 mt-1">This is set via environment variables (NEXT_PUBLIC_APP_ID).</p>
                     </div>

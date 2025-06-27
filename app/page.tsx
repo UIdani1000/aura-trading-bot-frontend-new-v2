@@ -243,8 +243,8 @@ function TradingDashboardContent() {
   const [tradeLogError, setTradeLogError] = useState<string | null>(null);
 
   // Settings states - CORRECTED these lines to be standard useState declarations
-  const [backendUrlSetting, setBackendUrlSetting] = useState(BACKEND_BASE_URL);
-  const [appIdSetting, setAppIdSetting] = useState(appId);
+  const [backendUrlSetting] = useState(BACKEND_BASE_URL);
+  const [appIdSetting] = useState(appId);
 
 
   // --- HANDLERS ---

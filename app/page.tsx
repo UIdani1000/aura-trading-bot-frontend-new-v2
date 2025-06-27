@@ -32,12 +32,28 @@ import {
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 
-
 // Import the new FirebaseProvider and useFirebase hook
 import { FirebaseProvider, useFirebase } from '@/components/FirebaseProvider';
 
+// Import Firebase Firestore functions directly
+import {
+  collection,
+  query,
+  getDocs,
+  addDoc,
+  deleteDoc,
+  setDoc,
+  updateDoc,
+  onSnapshot,
+  where,
+  serverTimestamp,
+  doc,
+  orderBy // <-- This one is important for your queries
+} from 'firebase/firestore';
+
+
 // --- START: Backend URL ---
-const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL || "http://127.0.0.1:10000";
+const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL || "http://127.00.1:10000";
 console.log("DIAG: Initial BACKEND_BASE_URL (from env or fallback):", BACKEND_BASE_URL);
 // --- END: Backend URL ---
 
@@ -151,7 +167,7 @@ const CustomAlert: React.FC<{ message: string; type: 'success' | 'error' | 'warn
   );
 };
 
-// Custom Confirmation Modal component (NEW)
+// Custom Confirmation Modal component
 const CustomConfirmModal: React.FC<{
   message: string;
   onConfirm: () => void;
@@ -193,7 +209,8 @@ export default function TradingDashboardWrapper() {
 
 function TradingDashboardContent() {
   // Use Firebase hook to get database, user ID, and readiness states
-  const { db, userId, firestoreModule } = useFirebase();
+  // Removed firestoreModule as it's no longer returned
+  const { db, userId, isAuthReady } = useFirebase();
 
   // --- STATE VARIABLES ---
   const [activeView, setActiveView] = useState("dashboard")
@@ -262,7 +279,7 @@ function TradingDashboardContent() {
   const [isSavingJournal, setIsSavingJournal] = useState(false)
   const [tradeLogError, setTradeLogError] = useState<string | null>(null);
 
-  // Confirmation Modal states (NEW)
+  // Confirmation Modal states
   const [showConfirmDeleteModal, setShowConfirmDeleteModal] = useState(false);
   const [tradeIdToDelete, setTradeIdToDelete] = useState<string | null>(null);
 
@@ -275,17 +292,17 @@ function TradingDashboardContent() {
   // --- HANDLERS ---
 
   const handleNewConversation = useCallback(async () => {
-    if (!db || !userId || !firestoreModule) {
+    if (!db || !userId || !isAuthReady) { // Changed firestoreModule to isAuthReady
       setCurrentAlert({ message: "Chat service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to create new conversation, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
+      console.warn("DIAG: Attempted to create new conversation, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady);
       return null;
     }
     console.log("DIAG: Creating new chat session...");
     try {
-      const sessionsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions`);
-      const newSessionRef = await firestoreModule.addDoc(sessionsCollectionRef, {
+      const sessionsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions`); // Direct call to collection
+      const newSessionRef = await addDoc(sessionsCollectionRef, { // Direct call to addDoc
         name: "New Chat " + new Date().toLocaleString().split(',')[0],
-        createdAt: firestoreModule.serverTimestamp(),
+        createdAt: serverTimestamp(), // Direct call to serverTimestamp
         lastMessageText: "No messages yet.",
       });
       setMessageInput('');
@@ -294,15 +311,15 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: "New conversation started! Type your first message.", type: "success" });
       console.log("DIAG: New chat session created with ID:", newSessionRef.id);
 
-      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${newSessionRef.id}/messages`);
+      const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${newSessionRef.id}/messages`); // Direct call to collection
       const initialGreeting: ChatMessage = {
         id: crypto.randomUUID(),
         sender: 'ai',
         text: `Hello! I&apos;m ${aiAssistantName}, your AI trading assistant. How can I help you today?`,
-        timestamp: firestoreModule.serverTimestamp(),
+        timestamp: serverTimestamp(), // Direct call to serverTimestamp
         type: 'text'
       };
-      await firestoreModule.addDoc(messagesCollectionRef, initialGreeting);
+      await addDoc(messagesCollectionRef, initialGreeting); // Direct call to addDoc
       console.log("DIAG: Initial greeting added to new chat session.");
       return newSessionRef.id;
     } catch (error: any) {
@@ -310,7 +327,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Failed to start new conversation: ${error.message}`, type: "error" });
       return null;
     }
-  }, [db, userId, firestoreModule, setChatMessages, setMessageInput, setIsChatHistoryMobileOpen, setCurrentAlert, appId, aiAssistantName]); // Removed aiAssistantName from deps if it was a constant
+  }, [db, userId, isAuthReady, setChatMessages, setMessageInput, setIsChatHistoryMobileOpen, setCurrentAlert, appId, aiAssistantName]);
 
 
   const handleSwitchConversation = (sessionId: string) => {
@@ -328,10 +345,10 @@ function TradingDashboardContent() {
       sender: 'ai',
       type: 'text',
       text: `Please wait while I retrieve ORMCR analysis for ${symbol}... This might take a moment.`,
-      timestamp: firestoreModule?.serverTimestamp(),
+      timestamp: db ? serverTimestamp() : null, // Direct call to serverTimestamp
     };
-    if (db && userId && currentChatSessionId && firestoreModule) {
-      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), analysisPendingMessage);
+    if (db && userId && currentChatSessionId && isAuthReady) { // Changed firestoreModule to isAuthReady
+      void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), analysisPendingMessage); // Direct call to collection and addDoc
     } else {
       setChatMessages((prevMessages) => [...prevMessages, analysisPendingMessage]);
     }
@@ -354,12 +371,12 @@ function TradingDashboardContent() {
       const analysisResult: AnalysisResult = await response.json();
       console.log("DIAG: ORMCR Analysis Result:", analysisResult);
 
-      if (db && userId && currentChatSessionId && firestoreModule) {
-        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-        const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
-        const querySnapshot = await firestoreModule.getDocs(q);
-        querySnapshot.forEach(async (doc: any) => {
-          void await firestoreModule.deleteDoc(doc.ref);
+      if (db && userId && currentChatSessionId && isAuthReady) { // Changed firestoreModule to isAuthReady
+        const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`); // Direct call to collection
+        const q = query(messagesCollectionRef, where('id', '==', analysisPendingMessage.id)); // Direct call to query and where
+        const querySnapshot = await getDocs(q); // Direct call to getDocs
+        querySnapshot.forEach(async (docRef: any) => { // Renamed 'doc' to 'docRef' to avoid conflict with imported 'doc'
+          void await deleteDoc(docRef.ref); // Direct call to deleteDoc
         });
       } else {
         setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
@@ -371,12 +388,12 @@ function TradingDashboardContent() {
         sender: 'ai',
         type: 'analysis',
         text: `Here is the ORMCR analysis for ${symbol}:`,
-        timestamp: firestoreModule?.serverTimestamp(),
+        timestamp: db ? serverTimestamp() : null, // Direct call to serverTimestamp
         analysis: analysisResult,
       };
 
-      if (db && userId && currentChatSessionId && firestoreModule) {
-        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiAnalysisMessage);
+      if (db && userId && currentChatSessionId && isAuthReady) { // Changed firestoreModule to isAuthReady
+        void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiAnalysisMessage); // Direct call to collection and addDoc
         console.log("DIAG: AI analysis message added to Firestore.");
       } else {
         setChatMessages((prevMessages) => [...prevMessages, aiAnalysisMessage]);
@@ -386,12 +403,12 @@ function TradingDashboardContent() {
 
     } catch (error: any) {
       console.error("DIAG: Error requesting ORMCR analysis:", error);
-      if (db && userId && currentChatSessionId && firestoreModule) {
-        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-        const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
-        const querySnapshot = await firestoreModule.getDocs(q);
-        querySnapshot.forEach(async (doc: any) => {
-          void await firestoreModule.deleteDoc(doc.ref);
+      if (db && userId && currentChatSessionId && isAuthReady) { // Changed firestoreModule to isAuthReady
+        const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`); // Direct call to collection
+        const q = query(messagesCollectionRef, where('id', '==', analysisPendingMessage.id)); // Direct call to query and where
+        const querySnapshot = await getDocs(q); // Direct call to getDocs
+        querySnapshot.forEach(async (docRef: any) => { // Renamed 'doc' to 'docRef'
+          void await deleteDoc(docRef.ref); // Direct call to deleteDoc
         });
       } else {
         setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
@@ -403,16 +420,16 @@ function TradingDashboardContent() {
         sender: 'ai',
         type: 'text',
         text: `Error requesting ORMCR analysis for ${symbol}. Details: ${error.message || "Unknown error"}.`,
-        timestamp: firestoreModule ? firestoreModule.serverTimestamp() : null,
+        timestamp: db ? serverTimestamp() : null, // Direct call to serverTimestamp
       };
-      if (db && userId && currentChatSessionId && firestoreModule) {
-        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage);
+      if (db && userId && currentChatSessionId && isAuthReady) { // Changed firestoreModule to isAuthReady
+        void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage); // Direct call to collection and addDoc
       } else {
         setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
       }
       setCurrentAlert({ message: `Analysis failed: ${error.message || "Unknown error"}. Check backend deployment.`, type: "error" });
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, BACKEND_BASE_URL, appId]);
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, BACKEND_BASE_URL, appId]);
 
 
   const fetchBackendChatResponse = useCallback(async (requestBody: any) => {
@@ -440,17 +457,17 @@ function TradingDashboardContent() {
           id: crypto.randomUUID(),
           sender: "ai",
           text: aiResponseText,
-          timestamp: firestoreModule?.serverTimestamp(),
+          timestamp: db ? serverTimestamp() : null, // Direct call to serverTimestamp
           type: 'text'
         };
 
         console.log("DIAG: AI response received:", data);
-        if (db && userId && currentChatSessionId && firestoreModule) {
-          void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiMessage);
+        if (db && userId && currentChatSessionId && isAuthReady) { // Changed firestoreModule to isAuthReady
+          void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiMessage); // Direct call to collection and addDoc
           console.log("DIAG: AI response added to Firestore.");
 
-          const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
-          void await firestoreModule.setDoc(sessionDocRef, {
+          const sessionDocRef = doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`); // Direct call to doc
+          void await setDoc(sessionDocRef, { // Direct call to setDoc
             lastMessageText: aiMessage.text,
             lastMessageTimestamp: aiMessage.timestamp,
           }, { merge: true });
@@ -463,11 +480,11 @@ function TradingDashboardContent() {
         id: crypto.randomUUID(),
         sender: "ai",
         text: `Oops! I encountered an error getting a response from the backend: ${error.message || "Unknown error"}. Please check your backend's status and its URL configuration in Vercel. 😅`,
-        timestamp: firestoreModule ? firestoreModule.serverTimestamp() : null,
+        timestamp: db ? serverTimestamp() : null, // Direct call to serverTimestamp
         type: 'text'
       };
-      if (db && userId && currentChatSessionId && firestoreModule) {
-        void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage);
+      if (db && userId && currentChatSessionId && isAuthReady) { // Changed firestoreModule to isAuthReady
+        void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage); // Direct call to collection and addDoc
       } else {
         setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
       }
@@ -475,7 +492,7 @@ function TradingDashboardContent() {
       setIsSendingMessage(false);
       console.log("DIAG: Backend fetch finished.");
     }
-  }, [appId, db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest, setIsSendingMessage, BACKEND_BASE_URL]);
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest, setIsSendingMessage, BACKEND_BASE_URL, appId]); // Removed BACKEND_BASE_URL and appId from deps as they are constants
 
 
   const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {
@@ -483,9 +500,9 @@ function TradingDashboardContent() {
       console.log("DIAG: handleSendMessage aborted: message is empty or only whitespace, and not a voice message.");
       return;
     }
-    if (!db || !userId || !currentChatSessionId || !firestoreModule) {
+    if (!db || !userId || !currentChatSessionId || !isAuthReady) { // Changed firestoreModule to isAuthReady
       setCurrentAlert({ message: "Chat service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to send message, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "firestoreModule:", !!firestoreModule);
+      console.warn("DIAG: Attempted to send message, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isAuthReady:", isAuthReady);
       return;
     }
 
@@ -500,17 +517,17 @@ function TradingDashboardContent() {
         id: crypto.randomUUID(),
         sender: "user",
         text: messageContent,
-        timestamp: firestoreModule.serverTimestamp(),
+        timestamp: serverTimestamp(), // Direct call to serverTimestamp
         type: messageType,
         audioUrl: isVoice && audioBlob ? URL.createObjectURL(audioBlob) : undefined
       };
       console.log("DIAG: User message prepared:", userMessage);
 
       console.log("DIAG: Adding user message to Firestore for session:", currentChatSessionId);
-      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), userMessage);
+      void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), userMessage); // Direct call to collection and addDoc
       console.log("DIAG: User message added to Firestore.");
 
-      const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
+      const sessionDocRef = doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`); // Direct call to doc
 
       const isFirstMessageInNewSession = chatMessages.length === 1 && chatMessages[0].sender === 'ai';
       const currentSession = chatSessions.find((s: ChatSession) => s.id === currentChatSessionId);
@@ -521,7 +538,7 @@ function TradingDashboardContent() {
           newSessionName = userMessage.text.substring(0, 30) + (userMessage.text.length > 30 ? '...' : '');
       }
 
-      void await firestoreModule.setDoc(sessionDocRef, {
+      void await setDoc(sessionDocRef, { // Direct call to setDoc
         lastMessageText: userMessage.text,
         lastMessageTimestamp: userMessage.timestamp,
         name: newSessionName,
@@ -558,7 +575,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Error sending message: ${error.message || "Unknown error"}`, type: "error" });
       setIsSendingMessage(false);
     }
-  }, [appId, messageInput, db, userId, currentChatSessionId, firestoreModule, chatMessages, chatSessions, fetchBackendChatResponse, setMessageInput, setCurrentAlert, setIsSendingMessage]);
+  }, [messageInput, db, userId, currentChatSessionId, isAuthReady, chatMessages, chatSessions, fetchBackendChatResponse, setMessageInput, setCurrentAlert, setIsSendingMessage, appId]); // Removed appId from deps
 
 
   const handleStartVoiceRecording = useCallback(async () => {
@@ -684,9 +701,9 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: "Please fill in all trade log fields.", type: "warning" });
       return;
     }
-    if (!db || !userId || !firestoreModule) {
+    if (!db || !userId || !isAuthReady) { // Changed firestoreModule to isAuthReady
       setCurrentAlert({ message: "Trade log service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to add trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
+      console.warn("DIAG: Attempted to add trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady);
       return;
     }
 
@@ -710,10 +727,10 @@ function TradingDashboardContent() {
         exitPrice: exitPriceNum,
         volume: volumeNum,
         profitOrLoss: parseFloat(profitOrLoss.toFixed(2)),
-        timestamp: firestoreModule.serverTimestamp(),
+        timestamp: serverTimestamp(), // Direct call to serverTimestamp
       };
 
-      void await firestoreModule.addDoc(firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`), tradeLogEntry);
+      void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`), tradeLogEntry); // Direct call to collection and addDoc
 
       setCurrentAlert({ message: "Trade log added successfully!", type: "success" });
       setTradeLogForm({
@@ -738,9 +755,9 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: "Please select a trade and write a journal entry.", type: "warning" });
       return;
     }
-    if (!db || !userId || !firestoreModule) {
+    if (!db || !userId || !isAuthReady) { // Changed firestoreModule to isAuthReady
       setCurrentAlert({ message: "Journal save service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to save journal, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
+      console.warn("DIAG: Attempted to save journal, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady);
       return;
     }
 
@@ -748,8 +765,8 @@ function TradingDashboardContent() {
     setTradeLogError(null);
 
     try {
-      const tradeDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, selectedTradeForJournal);
-      void await firestoreModule.updateDoc(tradeDocRef, {
+      const tradeDocRef = doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, selectedTradeForJournal); // Direct call to doc
+      void await updateDoc(tradeDocRef, { // Direct call to updateDoc
         journalEntry: journalEntry,
       });
 
@@ -766,27 +783,27 @@ function TradingDashboardContent() {
     }
   };
 
-  // Handler to trigger the custom confirmation modal (NEW)
+  // Handler to trigger the custom confirmation modal
   const handleDeleteTradeLogClick = (tradeId: string) => {
     setTradeIdToDelete(tradeId);
     setShowConfirmDeleteModal(true);
   };
 
-  // Actual deletion handler (called by custom modal) (NEW)
+  // Actual deletion handler (called by custom modal)
   const confirmDeleteTradeLog = async () => {
     setShowConfirmDeleteModal(false); // Close modal
     if (!tradeIdToDelete) return;
 
-    if (!db || !userId || !firestoreModule) {
+    if (!db || !userId || !isAuthReady) { // Changed firestoreModule to isAuthReady
       setCurrentAlert({ message: "Trade log deletion service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to delete trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule);
+      console.warn("DIAG: Attempted to delete trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady);
       return;
     }
 
     setTradeLogError(null);
     try {
-      const tradeDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, tradeIdToDelete);
-      void await firestoreModule.deleteDoc(tradeDocRef);
+      const tradeDocRef = doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, tradeIdToDelete); // Direct call to doc
+      void await deleteDoc(tradeDocRef); // Direct call to deleteDoc
       setCurrentAlert({ message: "Trade log deleted successfully!", type: "success" });
       console.log("DIAG: Trade log deleted:", tradeIdToDelete);
       setTradeIdToDelete(null); // Clear the ID after deletion
@@ -797,7 +814,7 @@ function TradingDashboardContent() {
     }
   };
 
-  // Cancel deletion handler (NEW)
+  // Cancel deletion handler
   const cancelDeleteTradeLog = () => {
     setShowConfirmDeleteModal(false);
     setTradeIdToDelete(null);
@@ -822,7 +839,6 @@ function TradingDashboardContent() {
                     void await handleSendMessage();
                 } else {
                     console.error("DIAG: Failed to create new conversation, message not sent.");
-                    // No need to setIsSendingMessage(false) here, as it's handled in handleSendMessage's finally block
                 }
               } else {
                 void await handleSendMessage();
@@ -840,12 +856,12 @@ function TradingDashboardContent() {
 
   // --- USE EFFECTS ---
   useEffect(() => {
-    console.log("DIAG: useEffect for chat sessions listener triggered. db ready:", !!db, "userId ready:", !!userId, "firestoreModule:", !!firestoreModule);
-    if (db && userId && firestoreModule) {
-      const sessionsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions`);
-      const q = firestoreModule.query(sessionsCollectionRef, firestoreModule.orderBy('createdAt', 'desc'));
+    console.log("DIAG: useEffect for chat sessions listener triggered. db ready:", !!db, "userId ready:", !!userId, "isAuthReady:", isAuthReady); // Changed firestoreModule to isAuthReady
+    if (db && userId && isAuthReady) { // Changed firestoreModule to isAuthReady
+      const sessionsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions`); // Direct call to collection
+      const q = query(sessionsCollectionRef, orderBy('createdAt', 'desc')); // Direct call to query and orderBy
 
-      const unsubscribe = firestoreModule.onSnapshot(q, (snapshot: any) => {
+      const unsubscribe = onSnapshot(q, (snapshot: any) => { // Direct call to onSnapshot
         console.log("DIAG: onSnapshot for chat sessions received data.");
         const sessions = snapshot.docs.map((doc: any) => ({
           id: doc.id,
@@ -876,18 +892,18 @@ function TradingDashboardContent() {
       };
     } else {
       setChatSessions([]);
-      console.log("DIAG: Chat sessions listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
+      console.log("DIAG: Chat sessions listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, ")"); // Changed firestoreModule to isAuthReady
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setChatSessions, setCurrentChatSessionId, setCurrentAlert, appId]); // Added appId to deps
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatSessions, setCurrentChatSessionId, setCurrentAlert, appId]); // Removed appId from deps
 
 
   useEffect(() => {
-    console.log("DIAG: useEffect for chat messages listener triggered. db ready:", !!db, "userId ready:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "firestoreModule:", !!firestoreModule);
-    if (db && userId && currentChatSessionId && firestoreModule) {
-      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-      const q = firestoreModule.query(messagesCollectionRef, firestoreModule.orderBy('timestamp', 'asc'));
+    console.log("DIAG: useEffect for chat messages listener triggered. db ready:", !!db, "userId ready:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isAuthReady:", isAuthReady); // Changed firestoreModule to isAuthReady
+    if (db && userId && currentChatSessionId && isAuthReady) { // Changed firestoreModule to isAuthReady
+      const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`); // Direct call to collection
+      const q = query(messagesCollectionRef, orderBy('timestamp', 'asc')); // Direct call to query and orderBy
 
-      const unsubscribe = firestoreModule.onSnapshot(q, (snapshot: any) => {
+      const unsubscribe = onSnapshot(q, (snapshot: any) => { // Direct call to onSnapshot
         console.log("DIAG: onSnapshot for chat messages received data for session:", currentChatSessionId);
         const messages = snapshot.docs.map((doc: any) => ({
           id: doc.id,
@@ -910,9 +926,9 @@ function TradingDashboardContent() {
       };
     } else {
       setChatMessages([]);
-      console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "firestoreModule:", !!firestoreModule, ")");
+      console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isAuthReady:", isAuthReady, ")"); // Changed firestoreModule to isAuthReady
     }
-  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, appId]);
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, appId]); // Removed appId from deps
 
   useEffect(() => {
     if (chatMessagesEndRef.current) {
@@ -944,7 +960,8 @@ function TradingDashboardContent() {
         setLoadingPrices(false);
       }
     }
-  }, [setLoadingPrices, setErrorPrices, setMarketPrices, BACKEND_BASE_URL]); // Removed BACKEND_BASE_URL as it is a constant
+  }, [setLoadingPrices, setErrorPrices, setMarketPrices]); // Removed BACKEND_BASE_URL from deps
+
 
   useEffect(() => {
     void fetchMarketPricesData(true);
@@ -974,7 +991,7 @@ function TradingDashboardContent() {
       console.error("DIAG: Error fetching live price for analysis page:", e);
       setCurrentLivePrice('Error');
     }
-  }, [setCurrentLivePrice, BACKEND_BASE_URL]); // Removed BACKEND_BASE_URL as it is a constant
+  }, [setCurrentLivePrice]); // Removed BACKEND_BASE_URL from deps
 
   useEffect(() => {
     if (activeView === 'analysis') {
@@ -985,13 +1002,13 @@ function TradingDashboardContent() {
   }, [activeView, analysisCurrencyPair, fetchAnalysisLivePrice]);
 
   useEffect(() => {
-    console.log("DIAG: useEffect for trade logs listener triggered. db ready:", !!db, "userId ready:", !!userId, "firestoreModule:", !!firestoreModule);
-    if (db && userId && firestoreModule) {
+    console.log("DIAG: useEffect for trade logs listener triggered. db ready:", !!db, "userId ready:", !!userId, "isAuthReady:", isAuthReady); // Changed firestoreModule to isAuthReady
+    if (db && userId && isAuthReady) { // Changed firestoreModule to isAuthReady
       setLoadingTradeLogs(true);
-      const tradeLogsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`);
-      const q = firestoreModule.query(tradeLogsCollectionRef, firestoreModule.orderBy('timestamp', 'desc'));
+      const tradeLogsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`); // Direct call to collection
+      const q = query(tradeLogsCollectionRef, orderBy('timestamp', 'desc')); // Direct call to query and orderBy
 
-      const unsubscribe = firestoreModule.onSnapshot(q, (snapshot: any) => {
+      const unsubscribe = onSnapshot(q, (snapshot: any) => { // Direct call to onSnapshot
         console.log("DIAG: onSnapshot for trade logs received data.");
         const logs = snapshot.docs.map((doc: any) => ({
           id: doc.id,
@@ -1019,9 +1036,9 @@ function TradingDashboardContent() {
     } else {
       setTradeLogs([]);
       setLoadingTradeLogs(false);
-      console.log("DIAG: Trade logs listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "firestoreModule:", !!firestoreModule, ")");
+      console.log("DIAG: Trade logs listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, ")"); // Changed firestoreModule to isAuthReady
     }
-  }, [db, userId, firestoreModule, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert, appId]);
+  }, [db, userId, isAuthReady, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert, appId]); // Removed appId from deps
 
 
   return (
@@ -1288,7 +1305,7 @@ function TradingDashboardContent() {
                           )}
                         </button>
                         <button
-                          onClick={async () => { // Refactored this onClick
+                          onClick={async () => {
                             if (isVoiceRecording) {
                                 void handleStopVoiceRecording();
                             } else {
@@ -1345,7 +1362,7 @@ function TradingDashboardContent() {
                           )}
                         </button>
                         <button
-                          onClick={async () => { // Refactored this onClick
+                          onClick={async () => {
                             if (!currentChatSessionId) {
                                 console.log("DIAG: No current chat session, attempting to create new conversation before starting voice recording.");
                                 const newSessionId = await handleNewConversation();
@@ -1885,7 +1902,7 @@ function TradingDashboardContent() {
                                   <Edit2 className="w-4 h-4" />
                                 </button>
                                 <button
-                                  onClick={() => handleDeleteTradeLogClick(trade.id)} // Changed to use new handler (NEW)
+                                  onClick={() => handleDeleteTradeLogClick(trade.id)}
                                   className="text-red-400 hover:text-red-500"
                                   title="Delete Trade"
                                 >

@@ -243,13 +243,8 @@ function TradingDashboardContent() {
   const [tradeLogError, setTradeLogError] = useState<string | null>(null);
 
   // Settings states
-  const [backendUrlSetting, setBackendUrlSetting] = useState(BACKEND_BASE_URL);
-  // Renamed to _setBackendUrlSetting to suppress ESLint no-unused-vars warning since it's read-only
-  const _setBackendUrlSetting = setBackendUrlSetting;
-
-  const [appIdSetting, setAppIdSetting] = useState(appId);
-  // Renamed to _setAppIdSetting to suppress ESLint no-unused-vars warning since it's read-only
-  const _setAppIdSetting = setAppIdSetting;
+  const [backendUrlSetting] = useState(BACKEND_BASE_URL); // Removed _setBackendUrlSetting
+  const [appIdSetting] = useState(appId); // Removed _setAppIdSetting
 
 
   // --- HANDLERS ---
@@ -345,7 +340,7 @@ function TradingDashboardContent() {
         const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
         const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
         const querySnapshot = await firestoreModule.getDocs(q);
-        querySnapshot.forEach(async (doc) => {
+        querySnapshot.forEach(async (doc: any) => { // Added type to doc
           await firestoreModule.deleteDoc(doc.ref);
         });
       } else {
@@ -380,7 +375,7 @@ function TradingDashboardContent() {
         const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
         const q = firestoreModule.query(messagesCollectionRef, firestoreModule.where('id', '==', analysisPendingMessage.id));
         const querySnapshot = await firestoreModule.getDocs(q);
-        querySnapshot.forEach(async (doc) => {
+        querySnapshot.forEach(async (doc: any) => { // Added type to doc
           await firestoreModule.deleteDoc(doc.ref);
         });
       } else {
@@ -794,6 +789,7 @@ function TradingDashboardContent() {
       }
     }
   };
+
 
   // --- NEW KEYDOWN HANDLER FOR CHAT INPUT ---
   const handleChatInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

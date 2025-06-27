@@ -15,8 +15,8 @@ import {
   Plus,
   History,
   SquarePen,
-  Mic,
-  Volume2,
+  Mic, // Make sure Mic icon is imported
+  Volume2, // Make sure Volume2 icon is imported for playing audio (though we'll use it for recording state here too)
   TrendingDown,
   DollarSign,
   BarChart3,
@@ -166,13 +166,13 @@ function TradingDashboardContent() {
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const chatMessagesEndRef = useRef<HTMLDivElement>(null)
   const [chatMessages, setChatMessages] = useState<
-    { id: string; sender: string; text: string; timestamp?: any }[]
+    { id: string; sender: string; text: string; timestamp?: any; type?: string; audioUrl?: string }[] // Added type and audioUrl
   >([]);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [currentChatSessionId, setCurrentChatSessionId] = useState<string | null>(null);
-  const [isVoiceRecording, setIsVoiceRecording] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const [isVoiceRecording, setIsVoiceRecording] = useState(false); // State for voice recording
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null); // Ref for MediaRecorder instance
+  const audioChunksRef = useRef<Blob[]>([]); // Ref to store audio data chunks
 
   const [aiAssistantName] = useState("Aura");
 
@@ -308,7 +308,7 @@ function TradingDashboardContent() {
 
     } catch (error: any) {
       console.error("DIAG: Error communicating with backend:", error);
-      setCurrentAlert({ message: `Failed to get AI response. Check backend deployment and URL: ${error.message || "Unknown error"}`, type: "error" });
+      setCurrentAlert({ message: `Failed to get AI response. Check backend deployment and URL: ${error.message || "Unknown error"}.`, type: "error" });
       const errorMessage = { id: crypto.randomUUID(), sender: "ai", text: `Oops! I encountered an error getting a response from the backend: ${error.message || "Unknown error"}. Please check your backend's status and its URL configuration in Vercel. 😅`, timestamp: firestoreModule ? firestoreModule.serverTimestamp() : null };
       if (db && userId && currentChatSessionId && firestoreModule) {
         const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
@@ -339,7 +339,7 @@ function TradingDashboardContent() {
     setMessageInput(""); // Clear input immediately, will be re-populated for voice if needed
 
     try {
-      const userMessage = { id: crypto.randomUUID(), sender: "user", text: messageContent, timestamp: firestoreModule.serverTimestamp(), type: messageType };
+      const userMessage = { id: crypto.randomUUID(), sender: "user", text: messageContent, timestamp: firestoreModule.serverTimestamp(), type: messageType, audioUrl: isVoice && audioBlob ? URL.createObjectURL(audioBlob) : undefined }; // Store object URL for local playback
       console.log("DIAG: User message prepared:", userMessage);
 
       console.log("DIAG: Adding user message to Firestore for session:", currentChatSessionId);
@@ -404,6 +404,7 @@ function TradingDashboardContent() {
   const handleStartVoiceRecording = useCallback(async () => {
     if (typeof window === 'undefined' || !navigator.mediaDevices) {
       console.error("MediaDevices not supported in this environment.");
+      setCurrentAlert({ message: "Voice recording not supported in this browser.", type: "error" });
       return;
     }
     if (!currentChatSessionId) {
@@ -422,13 +423,16 @@ function TradingDashboardContent() {
         setMessageInput("[Voice Message]"); // Set placeholder for voice message
         await handleSendMessage(true, audioBlob);
         audioChunksRef.current = [];
+        // Stop all tracks to release microphone
+        stream.getTracks().forEach(track => track.stop());
       };
       mediaRecorderRef.current.start();
       setIsVoiceRecording(true);
+      setCurrentAlert({ message: "Recording voice...", type: "info" });
       console.log("DIAG: Voice recording started.");
-    } catch (err) {
+    } catch (err: any) {
       console.error("DIAG: Error accessing microphone:", err);
-      setCurrentAlert({ message: "Failed to start voice recording. Please check microphone permissions.", type: "error" });
+      setCurrentAlert({ message: `Failed to start voice recording. Check microphone permissions. Error: ${err.message}`, type: "error" });
     }
   }, [currentChatSessionId, handleSendMessage, setMessageInput]);
 
@@ -436,6 +440,7 @@ function TradingDashboardContent() {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.stop();
       setIsVoiceRecording(false);
+      setCurrentAlert({ message: "Voice recording stopped. Sending...", type: "info" });
       console.log("DIAG: Voice recording stopped.");
     }
   }, []);
@@ -1143,11 +1148,12 @@ function TradingDashboardContent() {
                             <Send className="h-5 w-5" />
                           )}
                         </button>
+                        {/* VOICE RECORDING BUTTON */}
                         <button
                           onClick={isVoiceRecording ? handleStopVoiceRecording : handleStartVoiceRecording}
                           className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
                           title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}
-                          disabled={!currentChatSessionId}
+                          disabled={isSendingMessage || !currentChatSessionId} // Disable if sending or no session
                         >
                           {isVoiceRecording ? <Volume2 className="h-5 w-5 text-white animate-pulse" /> : <Mic className="h-5 w-5 text-white" />}
                         </button>
@@ -1193,6 +1199,29 @@ function TradingDashboardContent() {
                           ) : (
                             <Send className="h-5 w-5" />
                           )}
+                        </button>
+                        {/* VOICE RECORDING BUTTON - in empty state, it should ALSO create a new session first */}
+                        <button
+                          onClick={async () => {
+                            // If no current session, create one first before recording
+                            if (!currentChatSessionId) {
+                                console.log("DIAG: No current chat session, attempting to create new conversation before starting voice recording.");
+                                const newSessionId = await handleNewConversation();
+                                if (!newSessionId) {
+                                    // If new session creation failed, don't proceed with recording
+                                    console.error("DIAG: Failed to create new conversation, cannot start voice recording.");
+                                    return;
+                                }
+                                // It's important that currentChatSessionId gets set by the listener,
+                                // but for immediate action, we proceed assuming it will be available.
+                            }
+                            isVoiceRecording ? handleStopVoiceRecording() : handleStartVoiceRecording();
+                          }}
+                          className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
+                          title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}
+                          disabled={isSendingMessage} // Disable if sending
+                        >
+                          {isVoiceRecording ? <Volume2 className="h-5 w-5 text-white animate-pulse" /> : <Mic className="h-5 w-5 text-white" />}
                         </button>
                       </div>
                     </div>

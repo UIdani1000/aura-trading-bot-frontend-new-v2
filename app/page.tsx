@@ -760,7 +760,7 @@ function TradingDashboardContent() {
       };
     } else {
       setChatMessages([]); // Clear messages if not ready or no session
-      console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule, ")");
+      console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule, ")");
     }
   }, [db, userId, currentChatSessionId, isFirebaseServicesReady, isAuthReady, firestoreModule]);
 

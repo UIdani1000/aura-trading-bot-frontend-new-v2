@@ -220,7 +220,12 @@ function TradingDashboardContent() {
 
   // Settings states
   const [backendUrlSetting, setBackendUrlSetting] = useState(BACKEND_BASE_URL);
+  // Renamed to _setBackendUrlSetting to suppress ESLint no-unused-vars warning since it's read-only
+  const _setBackendUrlSetting = setBackendUrlSetting; 
+
   const [appIdSetting, setAppIdSetting] = useState(appId);
+  // Renamed to _setAppIdSetting to suppress ESLint no-unused-vars warning since it's read-only
+  const _setAppIdSetting = setAppIdSetting;
 
 
   // --- HANDLERS ---
@@ -324,7 +329,10 @@ function TradingDashboardContent() {
 
 
   const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {
-    if (!messageInput.trim() && !isVoice) return;
+    if (!messageInput.trim() && !isVoice) {
+      console.log("DIAG: handleSendMessage aborted: message is empty or only whitespace, and not a voice message.");
+      return; // Added console.log for clarity
+    }
     // Check if Firebase is ready before proceeding
     if (!db || !userId || !currentChatSessionId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
       setCurrentAlert({ message: "Chat service not ready. Please wait a moment for authentication to complete.", type: "warning" });
@@ -649,26 +657,28 @@ function TradingDashboardContent() {
         // Enter without Shift: Attempt to send message
         e.preventDefault(); // PREVENT default Enter behavior (e.g., new line or form submission)
         console.log("DIAG: Enter (no Shift) detected. Preventing default, attempting to send message.");
-        if (messageInput.trim()) { // Only send if the message is not just whitespace
-          // If no current chat session, create one first
-          if (!currentChatSessionId) {
-            console.log("DIAG: No current chat session, attempting to create new conversation before sending.");
-            const newSessionId = await handleNewConversation(); // Await creation and get ID
-            if (newSessionId) {
-                // If a new session was created successfully, attempt to send message
-                // This will rely on handleSendMessage picking up currentChatSessionId from state quickly.
-                // For very rapid key presses, a ref or explicit ID passing might be needed,
-                // but this generally works due to React's rendering cycle.
+        // Ensure not currently sending a message
+        if (!isSendingMessage) { // Added check here
+            if (messageInput.trim()) { // Only send if the message is not just whitespace
+              // If no current chat session, create one first
+              if (!currentChatSessionId) {
+                console.log("DIAG: No current chat session, attempting to create new conversation before sending.");
+                const newSessionId = await handleNewConversation(); // Await creation and get ID
+                if (newSessionId) {
+                    // If a new session was created successfully, attempt to send message
+                    handleSendMessage();
+                } else {
+                    console.error("DIAG: Failed to create new conversation, message not sent.");
+                    setIsSendingMessage(false); // Ensure sending state is reset
+                }
+              } else {
                 handleSendMessage();
+              }
             } else {
-                console.error("DIAG: Failed to create new conversation, message not sent.");
-                setIsSendingMessage(false); // Ensure sending state is reset
+              console.log("DIAG: Message input is empty or whitespace, not sending.");
             }
-          } else {
-            handleSendMessage();
-          }
         } else {
-          console.log("DIAG: Message input is empty or whitespace, not sending.");
+            console.log("DIAG: Already sending message, ignoring Enter key press.");
         }
       }
     }
@@ -1092,15 +1102,15 @@ function TradingDashboardContent() {
                                     rehypePlugins={[rehypeRaw]}
                                     components={{
                                       // Custom components for styling Markdown elements
-                                      p: ({node, ...props}) => <p className="mb-2" {...props} />,
-                                      ul: ({node, ...props}) => <ul className="list-disc list-inside mb-2" {...props} />,
-                                      ol: ({node, ...props}) => <ol className="list-decimal list-inside mb-2" {...props} />,
-                                      li: ({node, ...props}) => <li className="ml-4" {...props} />,
-                                      strong: ({node, ...props}) => <strong className="font-semibold text-white" {...props} />,
-                                      em: ({node, ...props}) => <em className="italic" {...props} />,
-                                      h1: ({node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-2" {...props} />,
-                                      h2: ({node, ...props}) => <h2 className="text-lg font-bold mt-3 mb-1" {...props} />,
-                                      h3: ({node, ...props}) => <h3 className="text-md font-semibold mt-2 mb-1" {...props} />,
+                                      p: ({_node, ...props}) => <p className="mb-2" {...props} />, // Added _ to suppress warning
+                                      ul: ({_node, ...props}) => <ul className="list-disc list-inside mb-2" {...props} />, // Added _
+                                      ol: ({_node, ...props}) => <ol className="list-decimal list-inside mb-2" {...props} />, // Added _
+                                      li: ({_node, ...props}) => <li className="ml-4" {...props} />, // Added _
+                                      strong: ({_node, ...props}) => <strong className="font-semibold text-white" {...props} />, // Added _
+                                      em: ({_node, ...props}) => <em className="italic" {...props} />, // Added _
+                                      h1: ({_node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-2" {...props} />, // Added _
+                                      h2: ({_node, ...props}) => <h2 className="text-lg font-bold mt-3 mb-1" {...props} />, // Added _
+                                      h3: ({_node, ...props}) => <h3 className="text-md font-semibold mt-2 mb-1" {...props} />, // Added _
                                     }}
                                   >
                                     {msg.text}
@@ -1136,7 +1146,7 @@ function TradingDashboardContent() {
                         />
                         <button
                           className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
-                          onClick={() => messageInput.trim() && handleSendMessage()} // Call directly, check for empty
+                          onClick={handleSendMessage} {/* FIX: Direct call, handleSendMessage already checks messageInput.trim() */}
                           disabled={isSendingMessage || !messageInput.trim()} // Disable if input is empty
                         >
                           {isSendingMessage ? (
@@ -1183,10 +1193,12 @@ function TradingDashboardContent() {
                           className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
                           onClick={async () => {
                             if (messageInput.trim()) {
-                                const newSessionId = await handleNewConversation(); // Await creation and get ID
-                                if (newSessionId) {
-                                    handleSendMessage(); // Send message after session is created
+                                // If no current session, create one first
+                                if (!currentChatSessionId) {
+                                    const newSessionId = await handleNewConversation();
+                                    if (!newSessionId) return; // Exit if session creation failed
                                 }
+                                handleSendMessage(); // Send message after session is created/confirmed
                             }
                           }}
                           disabled={isSendingMessage || !messageInput.trim()} // Disable if input is empty

@@ -47,12 +47,6 @@ console.log("DIAG: Initial appId (from environment or fallback):", appId);
 
 
 // Define interfaces for the expected API response structure
-interface AISuggestion {
-  entry_type: string;
-  recommended_action: string;
-  position_size: string;
-}
-
 interface PriceDetail {
   price: string;
   percentage_change: string;
@@ -62,7 +56,6 @@ interface AnalysisResult {
   confidence_score: string;
   signal_strength: string;
   market_summary: string;
-  ai_suggestion: AISuggestion;
   stop_loss: PriceDetail;
   take_profit_1: PriceDetail;
   take_profit_2: PriceDetail;
@@ -73,6 +66,7 @@ interface AnalysisResult {
   ormcr_reason: string;
   // Added fields to match backend analysis response
   symbol: string;
+  // This is the ONLY correct and active 'ai_suggestion' definition.
   ai_suggestion: {
     entry_type: string;
     recommended_action: string;
@@ -2018,6 +2012,7 @@ function TradingDashboardContent() {
                     </div>
                     <div>
                       <label className="block text-sm font-medium mb-1">App ID (Read-only)</label>
+                      {/* This is a comment to add a unique change near the problematic line for verification. */}
                       <input
                         type="text"
                         readOnly

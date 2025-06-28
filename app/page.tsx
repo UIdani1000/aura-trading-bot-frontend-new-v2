@@ -322,7 +322,7 @@ function TradingDashboardContent() {
       };
       await addDoc(messagesCollectionRef, initialGreeting);
       console.log("DIAG: Initial greeting added to new chat session.");
-      return newSessionId;
+      return newSessionRef.id;
     } catch (error: any) {
       console.error("DIAG: Error creating new conversation:", error);
       setCurrentAlert({ message: `Failed to start new conversation: ${error.message}`, type: "error" });

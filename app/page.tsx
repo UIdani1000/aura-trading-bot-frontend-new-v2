@@ -264,7 +264,7 @@ function TradingDashboardContent() {
 
   // Trade Log states
   const [tradeLogs, setTradeLogs] = useState<TradeLogEntry[]>([])
-  const [loadingTradeLogs, setLoadingTradeLogs] = true
+  const [loadingTradeLogs, setLoadingTradeLogs] = useState(true) // CORRECTED: Changed `true` to `useState(true)`
   const [tradeLogForm, setTradeLogForm] = useState({
     currencyPair: "BTC/USD",
     entryPrice: "",
@@ -322,7 +322,7 @@ function TradingDashboardContent() {
       };
       await addDoc(messagesCollectionRef, initialGreeting);
       console.log("DIAG: Initial greeting added to new chat session.");
-      return newSessionRef.id;
+      return newSessionId;
     } catch (error: any) {
       console.error("DIAG: Error creating new conversation:", error);
       setCurrentAlert({ message: `Failed to start new conversation: ${error.message}`, type: "error" });

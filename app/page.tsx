@@ -212,7 +212,7 @@ function TradingDashboardContent() {
   // Use Firebase hook to get database, user ID, and readiness states
   // Temporarily replace useFirebase with dummy values to isolate the issue
   // const { db, userId, isAuthReady } = useFirebase(); // Commented out for testing
-  const db = null; // Placeholder for testing
+  const db = null as any; // Placeholder for testing, ensure 'as any' to avoid TS errors when not fully mocked
   const userId = "dummy-user-id"; // Placeholder for testing
   const isAuthReady = true; // Placeholder for testing
 
@@ -236,7 +236,7 @@ function TradingDashboardContent() {
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [currentChatSessionId, setCurrentChatSessionId] = useState<string | null>(null);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>([]); // Fixed type to MediaRecorder | null
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null); // Corrected initialization
   const audioChunksRef = useRef<Blob[]>([]);
 
   const [aiAssistantName] = useState("Aura");
@@ -354,7 +354,7 @@ function TradingDashboardContent() {
       timestamp: db ? serverTimestamp() : null,
     };
     if (db && userId && currentChatSessionId && isAuthReady) {
-      void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), analysisPendingMessage);
+      // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), analysisPendingMessage);
     } else {
       setChatMessages((prevMessages) => [...prevMessages, analysisPendingMessage]);
     }
@@ -378,12 +378,12 @@ function TradingDashboardContent() {
       console.log("DIAG: ORMCR Analysis Result:", analysisResult);
 
       if (db && userId && currentChatSessionId && isAuthReady) {
-        const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-        const q = query(messagesCollectionRef, where('id', '==', analysisPendingMessage.id));
-        const querySnapshot = await getDocs(q);
-        querySnapshot.forEach(async (docRef: any) => {
-          void await deleteDoc(docRef.ref);
-        });
+        // const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        // const q = query(messagesCollectionRef, where('id', '==', analysisPendingMessage.id));
+        // const querySnapshot = await getDocs(q);
+        // querySnapshot.forEach(async (docRef: any) => {
+        //   void await deleteDoc(docRef.ref);
+        // });
       } else {
         setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
       }
@@ -399,7 +399,7 @@ function TradingDashboardContent() {
       };
 
       if (db && userId && currentChatSessionId && isAuthReady) {
-        void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiAnalysisMessage);
+        // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiAnalysisMessage);
         console.log("DIAG: AI analysis message added to Firestore.");
       } else {
         setChatMessages((prevMessages) => [...prevMessages, aiAnalysisMessage]);
@@ -410,12 +410,12 @@ function TradingDashboardContent() {
     } catch (error: any) {
       console.error("DIAG: Error requesting ORMCR analysis:", error);
       if (db && userId && currentChatSessionId && isAuthReady) {
-        const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-        const q = query(messagesCollectionRef, where('id', '==', analysisPendingMessage.id));
-        const querySnapshot = await getDocs(q);
-        querySnapshot.forEach(async (docRef: any) => {
-          void await deleteDoc(docRef.ref);
-        });
+        // const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        // const q = query(messagesCollectionRef, where('id', '==', analysisPendingMessage.id));
+        // const querySnapshot = await getDocs(q);
+        // querySnapshot.forEach(async (docRef: any) => {
+        //   void await deleteDoc(docRef.ref);
+        // });
       } else {
         setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
       }
@@ -429,7 +429,7 @@ function TradingDashboardContent() {
         timestamp: db ? serverTimestamp() : null,
       };
       if (db && userId && currentChatSessionId && isAuthReady) {
-        void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage);
+        // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage);
       } else {
         setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
       }
@@ -457,7 +457,7 @@ function TradingDashboardContent() {
       if (aiResponseText.includes("ORMCR_ANALYSIS_REQUESTED:")) {
         const messageParts = aiResponseText.split("ORMCR_ANALYSIS_REQUESTED:");
         const symbol = messageParts[1].trim();
-        void await handleORMCRAnalysisRequest(symbol);
+        // void await handleORMCRAnalysisRequest(symbol); // Commented out
       } else {
         const aiMessage: ChatMessage = {
           id: crypto.randomUUID(),
@@ -469,14 +469,14 @@ function TradingDashboardContent() {
 
         console.log("DIAG: AI response received:", data);
         if (db && userId && currentChatSessionId && isAuthReady) {
-          void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiMessage);
+          // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiMessage);
           console.log("DIAG: AI response added to Firestore.");
 
-          const sessionDocRef = doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
-          void await setDoc(sessionDocRef, {
-            lastMessageText: aiMessage.text,
-            lastMessageTimestamp: aiMessage.timestamp,
-          }, { merge: true });
+          // const sessionDocRef = doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
+          // void await setDoc(sessionDocRef, {
+          //   lastMessageText: aiMessage.text,
+          //   lastMessageTimestamp: aiMessage.timestamp,
+          // }, { merge: true });
         }
       }
     } catch (error: any) {
@@ -490,7 +490,7 @@ function TradingDashboardContent() {
         type: 'text'
       };
       if (db && userId && currentChatSessionId && isAuthReady) {
-        void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage);
+        // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage);
       } else {
         setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
       }
@@ -498,7 +498,7 @@ function TradingDashboardContent() {
       setIsSendingMessage(false);
       console.log("DIAG: Backend fetch finished.");
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, handleORMCRAnalysisRequest, setIsSendingMessage, appId, BACKEND_BASE_URL]);
+  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, /* handleORMCRAnalysisRequest, */ setIsSendingMessage, appId, BACKEND_BASE_URL]);
 
 
   const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {
@@ -508,7 +508,7 @@ function TradingDashboardContent() {
     }
     if (!db || !userId || !currentChatSessionId || !isAuthReady) {
       setCurrentAlert({ message: "Chat service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to send message, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isAuthReady:", isAuthReady);
+      console.warn("DIAG: Attempted to send message, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady);
       return;
     }
 
@@ -535,25 +535,25 @@ function TradingDashboardContent() {
 
 
       console.log("DIAG: Adding user message to Firestore for session:", currentChatSessionId);
-      void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), userMessage);
+      // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), userMessage);
       console.log("DIAG: User message added to Firestore.");
 
-      const sessionDocRef = doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
+      // const sessionDocRef = doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
 
-      const isFirstMessageInNewSession = chatMessages.length === 1 && chatMessages[0].sender === 'ai';
-      const currentSession = chatSessions.find((s: ChatSession) => s.id === currentChatSessionId);
-      const isSessionNameGeneric = currentSession && currentSession.name.startsWith("New Chat");
+      // const isFirstMessageInNewSession = chatMessages.length === 1 && chatMessages[0].sender === 'ai';
+      // const currentSession = chatSessions.find((s: ChatSession) => s.id === currentChatSessionId);
+      // const isSessionNameGeneric = currentSession && currentSession.name.startsWith("New Chat");
 
-      let newSessionName = currentSession?.name || "Untitled Chat";
-      if (isFirstMessageInNewSession || isSessionNameGeneric) {
-          newSessionName = userMessage.text.substring(0, 30) + (userMessage.text.length > 30 ? '...' : '');
-      }
+      // let newSessionName = currentSession?.name || "Untitled Chat";
+      // if (isFirstMessageInNewSession || isSessionNameGeneric) {
+      //     newSessionName = userMessage.text.substring(0, 30) + (userMessage.text.length > 30 ? '...' : '');
+      // }
 
-      void await setDoc(sessionDocRef, {
-        lastMessageText: userMessage.text,
-        lastMessageTimestamp: userMessage.timestamp,
-        name: newSessionName,
-      }, { merge: true });
+      // void await setDoc(sessionDocRef, {
+      //   lastMessageText: userMessage.text,
+      //   lastMessageTimestamp: userMessage.timestamp,
+      //   name: newSessionName,
+      // }, { merge: true });
 
       const payloadHistory = chatMessages
         .filter(msg => msg.id !== 'initial-greeting')
@@ -575,10 +575,10 @@ function TradingDashboardContent() {
         reader.onloadend = async () => {
           const base64Audio = (reader.result as string).split(',')[1];
           requestBody.audio_data = base64Audio;
-          void await fetchBackendChatResponse(requestBody);
+          // void await fetchBackendChatResponse(requestBody); // Commented out
         };
       } else {
-        void await fetchBackendChatResponse(requestBody);
+        // void await fetchBackendChatResponse(requestBody); // Commented out
       }
 
     } catch (error: any) {
@@ -586,7 +586,7 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Error sending message: ${error.message || "Unknown error"}`, type: "error" });
       setIsSendingMessage(false);
     }
-  }, [messageInput, db, userId, currentChatSessionId, isAuthReady, chatMessages, chatSessions, fetchBackendChatResponse, setMessageInput, setCurrentAlert, setIsSendingMessage, appId]);
+  }, [messageInput, db, userId, currentChatSessionId, isAuthReady, chatMessages, chatSessions, /* fetchBackendChatResponse, */ setMessageInput, setCurrentAlert, setIsSendingMessage, appId]);
 
 
   const handleStartVoiceRecording = useCallback(async () => {
@@ -609,7 +609,7 @@ function TradingDashboardContent() {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         console.log("DIAG: Audio recording stopped, blob created:", audioBlob);
         setMessageInput("[Voice Message]");
-        void await handleSendMessage(true, audioBlob);
+        // void await handleSendMessage(true, audioBlob); // Commented out
         audioChunksRef.current = [];
         stream.getTracks().forEach(track => track.stop());
       };
@@ -621,7 +621,7 @@ function TradingDashboardContent() {
       console.error("DIAG: Error accessing microphone:", err);
       setCurrentAlert({ message: `Failed to start voice recording. Check microphone permissions. Error: ${err.message}`, type: "error" });
     }
-  }, [currentChatSessionId, handleSendMessage, setMessageInput, setIsVoiceRecording, setCurrentAlert]);
+  }, [currentChatSessionId, /* handleSendMessage, */ setMessageInput, setIsVoiceRecording, setCurrentAlert]);
 
 
   const handleStopVoiceRecording = useCallback(() => {
@@ -741,7 +741,7 @@ function TradingDashboardContent() {
         timestamp: serverTimestamp(),
       };
 
-      void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`), tradeLogEntry);
+      // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`), tradeLogEntry); // Commented out
 
       setCurrentAlert({ message: "Trade log added successfully!", type: "success" });
       setTradeLogForm({
@@ -776,10 +776,10 @@ function TradingDashboardContent() {
     setTradeLogError(null);
 
     try {
-      const tradeDocRef = doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, selectedTradeForJournal);
-      void await updateDoc(tradeDocRef, {
-        journalEntry: journalEntry,
-      });
+      // const tradeDocRef = doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, selectedTradeForJournal); // Commented out
+      // void await updateDoc(tradeDocRef, { // Commented out
+      //   journalEntry: journalEntry, // Commented out
+      // }); // Commented out
 
       setCurrentAlert({ message: "Journal entry saved successfully!", type: "success" });
       setJournalEntry("");
@@ -813,8 +813,8 @@ function TradingDashboardContent() {
 
     setTradeLogError(null);
     try {
-      const tradeDocRef = doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, tradeIdToDelete);
-      void await deleteDoc(tradeDocRef);
+      // const tradeDocRef = doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, tradeIdToDelete); // Commented out
+      // void await deleteDoc(tradeDocRef); // Commented out
       setCurrentAlert({ message: "Trade log deleted successfully!", type: "success" });
       console.log("DIAG: Trade log deleted:", tradeIdToDelete);
       setTradeIdToDelete(null); // Clear the ID after deletion
@@ -904,7 +904,7 @@ function TradingDashboardContent() {
       };
     } else {
       setChatSessions([]);
-      console.log("DIAG: Chat sessions listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, ")");
+      console.log("DIAG: Chat sessions cleared or listener skipped. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, ")");
     }
   }, [db, userId, currentChatSessionId, isAuthReady, setChatSessions, setCurrentChatSessionId, setCurrentAlert, appId]);
 
@@ -976,11 +976,12 @@ function TradingDashboardContent() {
 
 
   useEffect(() => {
-    void fetchMarketPricesData(true);
+    // void fetchMarketPricesData(true); // Commented out
 
-    const intervalId = setInterval(() => void fetchMarketPricesData(false), 10000);
-    return () => clearInterval(intervalId);
-  }, [fetchMarketPricesData]);
+    // const intervalId = setInterval(() => void fetchMarketPricesData(false), 10000); // Commented out
+    // return () => clearInterval(intervalId); // Commented out
+  }, [/* fetchMarketPricesData */]); // Removed dependency array
+
 
   const fetchAnalysisLivePrice = useCallback(async (pair: string) => {
     console.log("DIAG: Fetching analysis live price for:", pair, "from:", BACKEND_BASE_URL + "/all_market_prices");
@@ -1007,44 +1008,44 @@ function TradingDashboardContent() {
 
   useEffect(() => {
     if (activeView === 'analysis') {
-      void fetchAnalysisLivePrice(analysisCurrencyPair);
-      const intervalId = setInterval(() => void fetchAnalysisLivePrice(analysisCurrencyPair), 10000);
-      return () => clearInterval(intervalId);
+      // void fetchAnalysisLivePrice(analysisCurrencyPair); // Commented out
+      // const intervalId = setInterval(() => void fetchAnalysisLivePrice(analysisCurrencyPair), 10000); // Commented out
+      // return () => clearInterval(intervalId); // Commented out
     }
-  }, [activeView, analysisCurrencyPair, fetchAnalysisLivePrice]);
+  }, [activeView, analysisCurrencyPair, /* fetchAnalysisLivePrice */]); // Removed fetchAnalysisLivePrice from dependencies
 
   useEffect(() => {
     console.log("DIAG: useEffect for trade logs listener triggered. db ready:", !!db, "userId ready:", !!userId, "isAuthReady:", isAuthReady);
     if (db && userId && isAuthReady) {
       setLoadingTradeLogs(true);
-      const tradeLogsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`);
-      const q = query(tradeLogsCollectionRef, orderBy('timestamp', 'desc'));
+      // const tradeLogsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`); // Commented out
+      // const q = query(tradeLogsCollectionRef, orderBy('timestamp', 'desc')); // Commented out
 
-      const unsubscribe = onSnapshot(q, (snapshot: any) => {
-        console.log("DIAG: onSnapshot for trade logs received data.");
-        const logs = snapshot.docs.map((doc: any) => ({
-          id: doc.id,
-          currencyPair: doc.data().currencyPair,
-          entryPrice: doc.data().entryPrice,
-          exitPrice: doc.data().exitPrice,
-          volume: doc.data().volume,
-          profitOrLoss: doc.data().profitOrLoss,
-          timestamp: doc.data().timestamp,
-          journalEntry: doc.data().journalEntry || '',
-        })) as TradeLogEntry[];
-        setTradeLogs(logs);
-        setLoadingTradeLogs(false);
-      }, (error: any) => {
-        console.error("DIAG: Error fetching trade logs:", error);
-        setTradeLogError(error.message || "Failed to load trade logs.");
-        setCurrentAlert({ message: `Failed to load trade logs: ${error.message || 'Unknown error'}`, type: "error" });
-        setLoadingTradeLogs(false);
-      });
+      // const unsubscribe = onSnapshot(q, (snapshot: any) => { // Commented out
+      //   console.log("DIAG: onSnapshot for trade logs received data."); // Commented out
+      //   const logs = snapshot.docs.map((doc: any) => ({ // Commented out
+      //     id: doc.id, // Commented out
+      //     currencyPair: doc.data().currencyPair, // Commented out
+      //     entryPrice: doc.data().entryPrice, // Commented out
+      //     exitPrice: doc.data().exitPrice, // Commented out
+      //     volume: doc.data().volume, // Commented out
+      //     profitOrLoss: doc.data().profitOrLoss, // Commented out
+      //     timestamp: doc.data().timestamp, // Commented out
+      //     journalEntry: doc.data().journalEntry || '', // Commented out
+      //   })) as TradeLogEntry[]; // Commented out
+      //   setTradeLogs(logs); // Commented out
+      //   setLoadingTradeLogs(false); // Commented out
+      // }, (error: any) => { // Commented out
+      //   console.error("DIAG: Error fetching trade logs:", error); // Commented out
+      //   setTradeLogError(error.message || "Failed to load trade logs."); // Commented out
+      //   setCurrentAlert({ message: `Failed to load trade logs: ${error.message || 'Unknown error'}`, type: "error" }); // Commented out
+      //   setLoadingTradeLogs(false); // Commented out
+      // }); // Commented out
 
-      return () => {
-        console.log("DIAG: Cleaning up trade logs listener.");
-        unsubscribe();
-      };
+      // return () => { // Commented out
+      //   console.log("DIAG: Cleaning up trade logs listener."); // Commented out
+      //   // unsubscribe(); // Commented out
+      // }; // Commented out
     } else {
       setTradeLogs([]);
       setLoadingTradeLogs(false);

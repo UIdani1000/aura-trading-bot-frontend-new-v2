@@ -33,9 +33,10 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 
 // Import the new FirebaseProvider and useFirebase hook
+// Keep this import, but we'll temporarily replace its usage with dummy values.
 import { FirebaseProvider, useFirebase } from '@/components/FirebaseProvider';
 
-// Import Firebase Firestore functions directly
+// Import Firebase Firestore functions directly (though not used in this test phase)
 import {
   collection,
   query,
@@ -209,7 +210,11 @@ export default function TradingDashboardWrapper() {
 
 function TradingDashboardContent() {
   // Use Firebase hook to get database, user ID, and readiness states
-  const { db, userId, isAuthReady } = useFirebase();
+  // Temporarily replace useFirebase with dummy values to isolate the issue
+  // const { db, userId, isAuthReady } = useFirebase(); // Commented out for testing
+  const db = null; // Placeholder for testing
+  const userId = "dummy-user-id"; // Placeholder for testing
+  const isAuthReady = true; // Placeholder for testing
 
   // --- STATE VARIABLES ---
   const [activeView, setActiveView] = useState("dashboard")
@@ -231,7 +236,7 @@ function TradingDashboardContent() {
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [currentChatSessionId, setCurrentChatSessionId] = useState<string | null>(null);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>([]); // Fixed type to MediaRecorder | null
   const audioChunksRef = useRef<Blob[]>([]);
 
   const [aiAssistantName] = useState("Aura");

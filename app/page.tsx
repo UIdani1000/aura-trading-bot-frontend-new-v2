@@ -867,12 +867,37 @@ function TradingDashboardContent() {
     return () => unsubscribe()
   }, [db, userId, isAuthReady, appId])
 
+  useEffect(() => {
+    if (!process.env.NEXT_PUBLIC_APP_ID) {
+      setCurrentAlert({ message: "App ID is missing. Please configure NEXT_PUBLIC_APP_ID in environment variables.", type: "error" })
+    }
+    if (!process.env.NEXT_PUBLIC_BACKEND_BASE_URL) {
+      setCurrentAlert({ message: "Backend URL is missing. Using default localhost URL.", type: "warning" })
+    }
+  }, [])
+
   if (!isAuthReady) {
     return <div className="flex h-screen items-center justify-center bg-[#0A0F2A] text-gray-200">Authenticating...</div>
   }
 
   return (
     <div className="flex h-screen bg-[#0A0F2A] text-gray-200 font-sans">
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #1A1F40;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #6B46C1;
+          border-radius: 3px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #7C3AED;
+        }
+      `}</style>
+
       <aside
         className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-[#0A0F2A]/90 backdrop-blur-sm transition-transform md:translate-x-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
@@ -881,7 +906,7 @@ function TradingDashboardContent() {
         <div className="flex h-16 items-center justify-between px-6 border-b border-purple-500/20">
           <div className="flex items-center space-x-2">
             <Bot className="h-6 w-6 text-purple-400" />
-            <span className="text-xl font-semibold">Aura Bot</span>
+            <span className="text-xl font-semibold text-white">Aura Bot</span>
           </div>
           <button className="md:hidden" onClick={() => setSidebarOpen(false)}>
             <X className="h-6 w-6 text-gray-400" />
@@ -915,7 +940,7 @@ function TradingDashboardContent() {
           <button className="md:hidden" onClick={() => setSidebarOpen(true)}>
             <Menu className="h-6 w-6 text-gray-400" />
           </button>
-          <h1 className="text-xl font-semibold">Aura Trading Dashboard</h1>
+          <h1 className="text-xl font-semibold text-white">Aura Trading Dashboard</h1>
           <div className="ml-auto flex items-center space-x-4">
             <Bell className="h-6 w-6 text-gray-400" />
             <span className="text-sm text-gray-400">User ID: {userId ? `${userId.substring(0, 8)}...` : 'Loading...'}</span>
@@ -1188,33 +1213,32 @@ function TradingDashboardContent() {
                           disabled={isSendingMessage || !messageInput.trim()}
                         >
                           {isSendingMessage ? (
-                            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                          ) : (
-                            <Send className="h-5 w-5" />
-                          )}
-                        </button>
-                        <button
-                          onClick={async () => {
-                            if (!currentChatSessionId) {
-                              const newSessionId = await handleNewConversation()
-                              if (!newSessionId) return
-                            }
-                            if (isVoiceRecording) {
-                              handleStopVoiceRecording()
-                            } else {
-                              await handleStartVoiceRecording()
-                            }
-                          }}
-                          className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600/80 hover:bg-red-700/80' : 'bg-blue-600/80 hover:bg-blue-700/80'}`}
-                          title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}
-                          disabled={isSendingMessage}
-                        >
-                          {isVoiceRecording ? <Volume2 className="h-5 w-5 text-white animate-pulse" /> : <Mic className="h-5 w-5 text-white" />}
-                        </button>
-                      </div>
+                            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="腫
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        ) : (
+                          <Send className="h-5 w-5" />
+                        )}
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!currentChatSessionId) {
+                            const newSessionId = await handleNewConversation()
+                            if (!newSessionId) return
+                          }
+                          if (isVoiceRecording) {
+                            handleStopVoiceRecording()
+                          } else {
+                            await handleStartVoiceRecording()
+                          }
+                        }}
+                        className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600/80 hover:bg-red-700/80' : 'bg-blue-600/80 hover:bg-blue-700/80'}`}
+                        title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}
+                        disabled={isSendingMessage}
+                      >
+                        {isVoiceRecording ? <Volume2 className="h-5 w-5 text-white animate-pulse" /> : <Mic className="h-5 w-5 text-white" />}
+                      </button>
                     </div>
                     <div className="flex space-x-4 mt-4">
                       <button className="bg-gray-700/50 text-gray-300 px-6 py-2 rounded-full hover:bg-gray-600/50 transition-colors">
@@ -1397,23 +1421,4 @@ function TradingDashboardContent() {
                         )}
                         {isAnalyzing ? "Analyzing..." : "Run AI Analysis"}
                       </button>
-                      {analysisError && <p className="text-red-400 text-sm mt-2">{analysisError}</p>}
-                    </div>
-                  </div>
-                </div>
-                <div className="lg:col-span-2 space-y-6">
-                  <div className="bg-gray-800/20 rounded-xl shadow-lg border border-cyan-500/10 backdrop-blur-sm p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-semibold text-cyan-300">Live Market Data</h3>
-                      <div className="flex items-center text-emerald-400">
-                        <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse mr-2"></div>
-                        <span className="text-sm">Connected</span>
-                      </div>
-                    </div>
-                    {loadingPrices && <p className="text-gray-400">Loading live market data...</p>}
-                    {errorPrices && <p className="text-red-400">Error loading live data.</p>}
-                    {!loadingPrices && !errorPrices && (
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div className="text-center p-3 bg-gray-700/20 rounded-lg">
-                          <div className="text-sm text-gray-400">Current Price</div>
-                          <div className="text-lg font-bold text
+                      {analysisError && <p className="text-red-

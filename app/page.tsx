@@ -33,25 +33,7 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 
 // Import the new FirebaseProvider and useFirebase hook
-// Keep this import, but we'll temporarily replace its usage with dummy values.
 import { FirebaseProvider, useFirebase } from '@/components/FirebaseProvider';
-
-// Import Firebase Firestore functions directly (though not used in this test phase)
-import {
-  collection,
-  query,
-  getDocs,
-  addDoc,
-  deleteDoc,
-  setDoc,
-  updateDoc,
-  onSnapshot,
-  where,
-  serverTimestamp,
-  doc,
-  orderBy
-} from 'firebase/firestore';
-
 
 // --- START: Backend URL ---
 const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_BASE_URL || "http://127.0.0.1:10000";
@@ -59,11 +41,16 @@ console.log("DIAG: Initial BACKEND_BASE_URL (from env or fallback):", BACKEND_BA
 // --- END: Backend URL ---
 
 // Global variables for Firebase configuration (using process.env for Vercel deployment)
-const appId = process.env.NEXT_PUBLIC_APP_ID || 'default-app-id'; // Keep this here for direct access within the component where needed.
+const appId = process.env.NEXT_PUBLIC_APP_ID || 'default-app-id';
 console.log("DIAG: Initial appId (from environment or fallback):", appId);
 
-
 // Define interfaces for the expected API response structure
+interface AISuggestion {
+  entry_type: string;
+  recommended_action: string;
+  position_size: string;
+}
+
 interface PriceDetail {
   price: string;
   percentage_change: string;
@@ -73,6 +60,7 @@ interface AnalysisResult {
   confidence_score: string;
   signal_strength: string;
   market_summary: string;
+  ai_suggestion: AISuggestion;
   stop_loss: PriceDetail;
   take_profit_1: PriceDetail;
   take_profit_2: PriceDetail;
@@ -81,18 +69,6 @@ interface AnalysisResult {
   ormcr_confirmation_status: string;
   ormcr_overall_bias: string;
   ormcr_reason: string;
-  // Added fields to match backend analysis response
-  symbol: string;
-  // This is the ONLY correct and active 'ai_suggestion' definition.
-  ai_suggestion: {
-    entry_type: string;
-    recommended_action: string;
-    position_size: string;
-    entry_price: string; // Added from backend response
-    direction: string; // Added from backend response
-    confidence: string; // Added from backend response
-    signal: string; // Added from backend response
-  };
 }
 
 // Market Data (for Dashboard and Analysis Live Price)
@@ -131,17 +107,6 @@ interface TradeLogEntry {
   journalEntry?: string;
 }
 
-// Chat message interface updated to include 'type' and 'audioUrl' and 'analysis'
-interface ChatMessage {
-  id: string;
-  sender: 'user' | 'ai';
-  text: string;
-  timestamp?: any;
-  type?: 'text' | 'audio' | 'analysis'; // Added 'audio' and 'analysis' type
-  audioUrl?: string; // For local playback of recorded audio
-  analysis?: AnalysisResult; // For storing full analysis object in message
-}
-
 // Custom Alert/Message component
 const CustomAlert: React.FC<{ message: string; type: 'success' | 'error' | 'warning' | 'info'; onClose: () => void }> = ({ message, type, onClose }) => {
   const bgColor = {
@@ -168,36 +133,6 @@ const CustomAlert: React.FC<{ message: string; type: 'success' | 'error' | 'warn
   );
 };
 
-// Custom Confirmation Modal component
-const CustomConfirmModal: React.FC<{
-  message: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-}> = ({ message, onConfirm, onCancel }) => {
-  return (
-    <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg p-6 shadow-xl border border-purple-500/30 max-w-sm mx-auto">
-        <p className="text-white text-lg mb-6">{message}</p>
-        <div className="flex justify-end space-x-4">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
-          >
-            Confirm
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-
 // !!! THIS IS THE MAIN EXPORT FOR YOUR PAGE !!!
 export default function TradingDashboardWrapper() {
   return (
@@ -207,14 +142,8 @@ export default function TradingDashboardWrapper() {
   );
 }
 
-
 function TradingDashboardContent() {
-  // Use Firebase hook to get database, user ID, and readiness states
-  // Temporarily replace useFirebase with dummy values to isolate the issue
-  // const { db, userId, isAuthReady } = useFirebase(); // Commented out for testing
-  const db = null as any; // Placeholder for testing, ensure 'as any' to avoid TS errors when not fully mocked
-  const userId = "dummy-user-id"; // Placeholder for testing
-  const isAuthReady = true; // Placeholder for testing
+  const { db, userId, isAuthReady, isFirebaseServicesReady, firestoreModule } = useFirebase();
 
   // --- STATE VARIABLES ---
   const [activeView, setActiveView] = useState("dashboard")
@@ -232,15 +161,16 @@ function TradingDashboardContent() {
   const [messageInput, setMessageInput] = useState("")
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const chatMessagesEndRef = useRef<HTMLDivElement>(null)
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatMessages, setChatMessages] = useState<
+    { id: string; sender: string; text: string; timestamp?: any }[]
+  >([]);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [currentChatSessionId, setCurrentChatSessionId] = useState<string | null>(null);
   const [isVoiceRecording, setIsVoiceRecording] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null); // Corrected initialization
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
   const [aiAssistantName] = useState("Aura");
-
 
   // Analysis Page Inputs and Results
   const [analysisCurrencyPair, setAnalysisCurrencyPair] = useState("BTC/USD")
@@ -251,7 +181,7 @@ function TradingDashboardContent() {
   ])
   const [analysisBalance, setAnalysisBalance] = useState("10000")
   const [analysisLeverage, setAnalysisLeverage] = useState("1x (No Leverage)")
-  const [analysisResults, setAnalysisResult] = useState<AnalysisResult | null>(null)
+  const [analysisResults, setAnalysisResults] = useState<AnalysisResult | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
 
@@ -283,58 +213,50 @@ function TradingDashboardContent() {
   const [isSavingJournal, setIsSavingJournal] = useState(false)
   const [tradeLogError, setTradeLogError] = useState<string | null>(null);
 
-  // Confirmation Modal states
-  const [showConfirmDeleteModal, setShowConfirmDeleteModal] = useState(false);
-  const [tradeIdToDelete, setTradeIdToDelete] = useState<string | null>(null);
-
-
   // Settings states
-  const [backendUrlSetting] = useState(BACKEND_BASE_URL);
-  // This const `appId` is already derived from `process.env.NEXT_PUBLIC_APP_ID` at the top of the file.
-  // We can display it directly from the `appId` constant declared at the top of the file.
-
+  const [backendUrlSetting, setBackendUrlSetting] = useState(BACKEND_BASE_URL);
+  const [appIdSetting, setAppIdSetting] = useState(appId);
 
   // --- HANDLERS ---
-  /*
+
   const handleNewConversation = useCallback(async () => {
-    if (!db || !userId || !isAuthReady) {
+    // Check if Firebase is ready before proceeding
+    if (!db || !userId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
       setCurrentAlert({ message: "Chat service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to create new conversation, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady);
-      return null;
+      console.warn("DIAG: Attempted to create new conversation, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
+      return;
     }
     console.log("DIAG: Creating new chat session...");
     try {
-      // Use the appId constant which is read from process.env.NEXT_PUBLIC_APP_ID
-      const sessionsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions`);
-      const newSessionRef = await addDoc(sessionsCollectionRef, {
+      // Use the global appId for collection path
+      const sessionsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions`);
+      const newSessionRef = await firestoreModule.addDoc(sessionsCollectionRef, {
         name: "New Chat " + new Date().toLocaleString().split(',')[0],
-        createdAt: serverTimestamp(),
+        createdAt: firestoreModule.serverTimestamp(),
         lastMessageText: "No messages yet.",
       });
+      setCurrentChatSessionId(newSessionRef.id);
       setMessageInput('');
       setChatMessages([]);
       setIsChatHistoryMobileOpen(false);
       setCurrentAlert({ message: "New conversation started! Type your first message.", type: "success" });
       console.log("DIAG: New chat session created with ID:", newSessionRef.id);
 
-      const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${newSessionRef.id}/messages`);
-      const initialGreeting: ChatMessage = {
+      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${newSessionRef.id}/messages`);
+      const initialGreeting = {
         id: crypto.randomUUID(),
         sender: 'ai',
         text: `Hello! I&apos;m ${aiAssistantName}, your AI trading assistant. How can I help you today?`,
-        timestamp: serverTimestamp(),
-        type: 'text'
+        timestamp: firestoreModule.serverTimestamp()
       };
-      await addDoc(messagesCollectionRef, initialGreeting);
+      await firestoreModule.addDoc(messagesCollectionRef, initialGreeting);
       console.log("DIAG: Initial greeting added to new chat session.");
-      return newSessionRef.id;
+
     } catch (error: any) {
       console.error("DIAG: Error creating new conversation:", error);
       setCurrentAlert({ message: `Failed to start new conversation: ${error.message}`, type: "error" });
-      return null;
     }
-  }, [db, userId, isAuthReady, setChatMessages, setMessageInput, setIsChatHistoryMobileOpen, setCurrentAlert, aiAssistantName, appId]);
-
+  }, [db, userId, aiAssistantName, isAuthReady, isFirebaseServicesReady, firestoreModule]);
 
   const handleSwitchConversation = (sessionId: string) => {
     setCurrentChatSessionId(sessionId);
@@ -343,100 +265,6 @@ function TradingDashboardContent() {
     setCurrentAlert({ message: "Switched to selected conversation.", type: "info" });
     console.log("DIAG: Switched to conversation ID:", sessionId);
   };
-
-
-  const handleORMCRAnalysisRequest = useCallback(async (symbol: string) => {
-    const analysisPendingMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      sender: 'ai',
-      type: 'text',
-      text: `Please wait while I retrieve ORMCR analysis for ${symbol}... This might take a moment.`,
-      timestamp: db ? serverTimestamp() : null,
-    };
-    if (db && userId && currentChatSessionId && isAuthReady) {
-      // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), analysisPendingMessage);
-    } else {
-      setChatMessages((prevMessages) => [...prevMessages, analysisPendingMessage]);
-    }
-
-
-    try {
-      const response = await fetch(`${BACKEND_BASE_URL}/run_ormcr_analysis`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ symbol: symbol, userId: userId }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({error: response.statusText}));
-        throw new Error(`Backend analysis error! Status: ${response.status}. Message: ${errorData.error || "Unknown response"}`);
-      }
-
-      const analysisResult: AnalysisResult = await response.json();
-      console.log("DIAG: ORMCR Analysis Result:", analysisResult);
-
-      if (db && userId && currentChatSessionId && isAuthReady) {
-        // const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-        // const q = query(messagesCollectionRef, where('id', '==', analysisPendingMessage.id));
-        // const querySnapshot = await getDocs(q);
-        // querySnapshot.forEach(async (docRef: any) => {
-        //   void await deleteDoc(docRef.ref);
-        // });
-      } else {
-        setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
-      }
-
-
-      const aiAnalysisMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        sender: 'ai',
-        type: 'analysis',
-        text: `Here is the ORMCR analysis for ${symbol}:`,
-        timestamp: db ? serverTimestamp() : null,
-        analysis: analysisResult,
-      };
-
-      if (db && userId && currentChatSessionId && isAuthReady) {
-        // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiAnalysisMessage);
-        console.log("DIAG: AI analysis message added to Firestore.");
-      } else {
-        setChatMessages((prevMessages) => [...prevMessages, aiAnalysisMessage]);
-      }
-
-      setCurrentAlert({ message: "ORMCR Analysis completed and added to chat.", type: "success" });
-
-    } catch (error: any) {
-      console.error("DIAG: Error requesting ORMCR analysis:", error);
-      if (db && userId && currentChatSessionId && isAuthReady) {
-        // const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-        // const q = query(messagesCollectionRef, where('id', '==', analysisPendingMessage.id));
-        // const querySnapshot = await getDocs(q);
-        // querySnapshot.forEach(async (docRef: any) => {
-        //   void await deleteDoc(docRef.ref);
-        // });
-      } else {
-        setChatMessages((prevMessages) => prevMessages.filter(msg => msg.id !== analysisPendingMessage.id));
-      }
-
-
-      const errorMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        sender: 'ai',
-        type: 'text',
-        text: `Error requesting ORMCR analysis for ${symbol}. Details: ${error.message || "Unknown error"}.`,
-        timestamp: db ? serverTimestamp() : null,
-      };
-      if (db && userId && currentChatSessionId && isAuthReady) {
-        // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage);
-      } else {
-        setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
-      }
-      setCurrentAlert({ message: `Analysis failed: ${error.message || "Unknown error"}. Check backend deployment.`, type: "error" });
-    }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, appId, BACKEND_BASE_URL]);
-
 
   const fetchBackendChatResponse = useCallback(async (requestBody: any) => {
     try {
@@ -453,44 +281,28 @@ function TradingDashboardContent() {
 
       const data = await response.json();
       const aiResponseText = data.response || "No response from AI.";
+      const aiMessage = { id: crypto.randomUUID(), sender: "ai", text: aiResponseText, timestamp: firestoreModule?.serverTimestamp() };
 
-      if (aiResponseText.includes("ORMCR_ANALYSIS_REQUESTED:")) {
-        const messageParts = aiResponseText.split("ORMCR_ANALYSIS_REQUESTED:");
-        const symbol = messageParts[1].trim();
-        // void await handleORMCRAnalysisRequest(symbol); // Commented out
-      } else {
-        const aiMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          sender: "ai",
-          text: aiResponseText,
-          timestamp: db ? serverTimestamp() : null,
-          type: 'text'
-        };
+      console.log("DIAG: AI response received:", data);
+      if (db && userId && currentChatSessionId && firestoreModule) {
+        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        await firestoreModule.addDoc(messagesCollectionRef, aiMessage);
+        console.log("DIAG: AI response added to Firestore.");
 
-        console.log("DIAG: AI response received:", data);
-        if (db && userId && currentChatSessionId && isAuthReady) {
-          // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), aiMessage);
-          console.log("DIAG: AI response added to Firestore.");
-
-          // const sessionDocRef = doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
-          // void await setDoc(sessionDocRef, {
-          //   lastMessageText: aiMessage.text,
-          //   lastMessageTimestamp: aiMessage.timestamp,
-          // }, { merge: true });
-        }
+        const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
+        await firestoreModule.setDoc(sessionDocRef, {
+          lastMessageText: aiMessage.text,
+          lastMessageTimestamp: aiMessage.timestamp,
+        }, { merge: true });
       }
+
     } catch (error: any) {
       console.error("DIAG: Error communicating with backend:", error);
-      setCurrentAlert({ message: `Failed to get AI response. Check backend deployment and URL: ${error.message || "Unknown error"}.`, type: "error" });
-      const errorMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        sender: "ai",
-        text: `Oops! I encountered an error getting a response from the backend: ${error.message || "Unknown error"}. Please check your backend's status and its URL configuration in Vercel. 😅`,
-        timestamp: db ? serverTimestamp() : null,
-        type: 'text'
-      };
-      if (db && userId && currentChatSessionId && isAuthReady) {
-        // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), errorMessage);
+      setCurrentAlert({ message: `Failed to get AI response. Check backend deployment and URL: ${error.message || "Unknown error"}`, type: "error" });
+      const errorMessage = { id: crypto.randomUUID(), sender: "ai", text: `Oops! I encountered an error getting a response from the backend: ${error.message || "Unknown error"}. Please check your backend's status and its URL configuration in Vercel. 😅`, timestamp: firestoreModule ? firestoreModule.serverTimestamp() : null };
+      if (db && userId && currentChatSessionId && firestoreModule) {
+        const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+        await firestoreModule.addDoc(messagesCollectionRef, errorMessage);
       } else {
         setChatMessages((prevMessages) => [...prevMessages, errorMessage]);
       }
@@ -498,17 +310,14 @@ function TradingDashboardContent() {
       setIsSendingMessage(false);
       console.log("DIAG: Backend fetch finished.");
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, /* handleORMCRAnalysisRequest, */ setIsSendingMessage, appId, BACKEND_BASE_URL]);
-
+  }, [db, userId, currentChatSessionId, firestoreModule, setChatMessages, setCurrentAlert, setIsSendingMessage]);
 
   const handleSendMessage = useCallback(async (isVoice = false, audioBlob?: Blob) => {
-    if (!messageInput.trim() && !isVoice) {
-      console.log("DIAG: handleSendMessage aborted: message is empty or only whitespace, and not a voice message.");
-      return;
-    }
-    if (!db || !userId || !currentChatSessionId || !isAuthReady) {
+    if (!messageInput.trim() && !isVoice) return;
+    // Check if Firebase is ready before proceeding
+    if (!db || !userId || !currentChatSessionId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
       setCurrentAlert({ message: "Chat service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to send message, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady);
+      console.warn("DIAG: Attempted to send message, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
       return;
     }
 
@@ -519,47 +328,25 @@ function TradingDashboardContent() {
     setMessageInput("");
 
     try {
-      // CORRECTED: Conditionally add audioUrl only if it's a voice message AND audioBlob exists
-      const userMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        sender: "user",
-        text: messageContent,
-        timestamp: serverTimestamp(),
-        type: messageType,
-      };
-
-      if (isVoice && audioBlob) {
-        userMessage.audioUrl = URL.createObjectURL(audioBlob);
-      }
+      const userMessage = { id: crypto.randomUUID(), sender: "user", text: messageContent, timestamp: firestoreModule.serverTimestamp(), type: messageType };
       console.log("DIAG: User message prepared:", userMessage);
 
-
       console.log("DIAG: Adding user message to Firestore for session:", currentChatSessionId);
-      // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`), userMessage);
+      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+      await firestoreModule.addDoc(messagesCollectionRef, userMessage);
       console.log("DIAG: User message added to Firestore.");
 
-      // const sessionDocRef = doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
-
-      // const isFirstMessageInNewSession = chatMessages.length === 1 && chatMessages[0].sender === 'ai';
-      // const currentSession = chatSessions.find((s: ChatSession) => s.id === currentChatSessionId);
-      // const isSessionNameGeneric = currentSession && currentSession.name.startsWith("New Chat");
-
-      // let newSessionName = currentSession?.name || "Untitled Chat";
-      // if (isFirstMessageInNewSession || isSessionNameGeneric) {
-      //     newSessionName = userMessage.text.substring(0, 30) + (userMessage.text.length > 30 ? '...' : '');
-      // }
-
-      // void await setDoc(sessionDocRef, {
-      //   lastMessageText: userMessage.text,
-      //   lastMessageTimestamp: userMessage.timestamp,
-      //   name: newSessionName,
-      // }, { merge: true });
+      const sessionDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}`);
+      await firestoreModule.setDoc(sessionDocRef, {
+        lastMessageText: userMessage.text,
+        lastMessageTimestamp: userMessage.timestamp,
+        name: chatMessages.length === 0 ? userMessage.text.substring(0, 30) + (userMessage.text.length > 30 ? '&hellip;' : '') : (chatSessions.find((s: ChatSession) => s.id === currentChatSessionId)?.name || "Untitled Chat"),
+      }, { merge: true });
 
       const payloadHistory = chatMessages
         .filter(msg => msg.id !== 'initial-greeting')
         .map(msg => ({ role: msg.sender === "user" ? "user" : "model", text: msg.text }));
       payloadHistory.push({ role: 'user', text: userMessage.text });
-
 
       const requestBody: any = {
         session_id: currentChatSessionId,
@@ -575,10 +362,10 @@ function TradingDashboardContent() {
         reader.onloadend = async () => {
           const base64Audio = (reader.result as string).split(',')[1];
           requestBody.audio_data = base64Audio;
-          // void await fetchBackendChatResponse(requestBody); // Commented out
+          await fetchBackendChatResponse(requestBody);
         };
       } else {
-        // void await fetchBackendChatResponse(requestBody); // Commented out
+        await fetchBackendChatResponse(requestBody);
       }
 
     } catch (error: any) {
@@ -586,13 +373,11 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: `Error sending message: ${error.message || "Unknown error"}`, type: "error" });
       setIsSendingMessage(false);
     }
-  }, [messageInput, db, userId, currentChatSessionId, isAuthReady, chatMessages, chatSessions, /* fetchBackendChatResponse, */ setMessageInput, setCurrentAlert, setIsSendingMessage, appId]);
-
+  }, [messageInput, db, userId, currentChatSessionId, isAuthReady, isFirebaseServicesReady, firestoreModule, chatMessages, chatSessions, fetchBackendChatResponse]);
 
   const handleStartVoiceRecording = useCallback(async () => {
     if (typeof window === 'undefined' || !navigator.mediaDevices) {
       console.error("MediaDevices not supported in this environment.");
-      setCurrentAlert({ message: "Voice recording not supported in this browser.", type: "error" });
       return;
     }
     if (!currentChatSessionId) {
@@ -609,29 +394,27 @@ function TradingDashboardContent() {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         console.log("DIAG: Audio recording stopped, blob created:", audioBlob);
         setMessageInput("[Voice Message]");
-        // void await handleSendMessage(true, audioBlob); // Commented out
+        await handleSendMessage(true, audioBlob);
         audioChunksRef.current = [];
-        stream.getTracks().forEach(track => track.stop());
       };
-      mediaRecorderRef.current.start();
-      setIsVoiceRecording(true);
-      setCurrentAlert({ message: "Recording voice...", type: "info" });
+      mediaRecorderRef.current.startTCG
+        .start();
+      setIsVoiceഗ
+        .VoiceRecording(true);
       console.log("DIAG: Voice recording started.");
-    } catch (err: any) {
+    } catch (err) {
       console.error("DIAG: Error accessing microphone:", err);
-      setCurrentAlert({ message: `Failed to start voice recording. Check microphone permissions. Error: ${err.message}`, type: "error" });
+      setCurrentAlert({ message: "Failed to start voice recording. Please check microphone permissions.", type: "error" });
     }
-  }, [currentChatSessionId, /* handleSendMessage, */ setMessageInput, setIsVoiceRecording, setCurrentAlert]);
-
+  }, [currentChatSessionId, handleSendMessage, setMessageInput]);
 
   const handleStopVoiceRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.stop();
       setIsVoiceRecording(false);
-      setCurrentAlert({ message: "Voice recording stopped. Sending...", type: "info" });
       console.log("DIAG: Voice recording stopped.");
     }
-  }, [setIsVoiceRecording, setCurrentAlert]);
+  }, []);
 
   const handleRunAnalysis = async () => {
     if (!analysisCurrencyPair || analysisTimeframes.length === 0 || !analysisBalance || !analysisLeverage) {
@@ -641,7 +424,7 @@ function TradingDashboardContent() {
 
     setIsAnalyzing(true);
     setAnalysisError(null);
-    setAnalysisResult(null);
+    setAnalysisResults(null);
 
     const analysisInput = {
       currencyPair: analysisCurrencyPair,
@@ -666,7 +449,7 @@ function TradingDashboardContent() {
       }
 
       const data: AnalysisResult = await response.json();
-      setAnalysisResult(data);
+      setAnalysisResults(data);
       setCurrentAlert({ message: "ORSCR Analysis completed!", type: "success" });
       console.log("DIAG: Analysis results received:", data);
 
@@ -699,7 +482,8 @@ function TradingDashboardContent() {
 
   const handleChatAboutAnalysis = () => {
     if (analysisResults && analysisResults.market_summary) {
-      setMessageInput(`Regarding the recent analysis for ${analysisCurrencyPair}:\n\n${analysisResults.market_summary}\n\nWhat do you think about this?`);
+      const analysisSummary = analysisResults.market_summary;
+      setMessageInput(`Regarding the recent analysis for ${analysisCurrencyPair}:\n\n${analysisSummary}\n\nWhat do you think about this?`);
       setActiveView("chat");
     } else {
       setCurrentAlert({ message: "No analysis results to chat about.", type: "warning" });
@@ -712,9 +496,10 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: "Please fill in all trade log fields.", type: "warning" });
       return;
     }
-    if (!db || !userId || !isAuthReady) {
+    // Check if Firebase is ready before proceeding
+    if (!db || !userId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
       setCurrentAlert({ message: "Trade log service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to add trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady);
+      console.warn("DIAG: Attempted to add trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
       return;
     }
 
@@ -738,10 +523,11 @@ function TradingDashboardContent() {
         exitPrice: exitPriceNum,
         volume: volumeNum,
         profitOrLoss: parseFloat(profitOrLoss.toFixed(2)),
-        timestamp: serverTimestamp(),
+        timestamp: firestoreModule.serverTimestamp(),
       };
 
-      // void await addDoc(collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`), tradeLogEntry); // Commented out
+      const tradeLogsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`);
+      await firestoreModule.addDoc(tradeLogsCollectionRef, tradeLogEntry);
 
       setCurrentAlert({ message: "Trade log added successfully!", type: "success" });
       setTradeLogForm({
@@ -766,9 +552,10 @@ function TradingDashboardContent() {
       setCurrentAlert({ message: "Please select a trade and write a journal entry.", type: "warning" });
       return;
     }
-    if (!db || !userId || !isAuthReady) {
+    // Check if Firebase is ready before proceeding
+    if (!db || !userId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
       setCurrentAlert({ message: "Journal save service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to save journal, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady);
+      console.warn("DIAG: Attempted to save journal, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
       return;
     }
 
@@ -776,10 +563,10 @@ function TradingDashboardContent() {
     setTradeLogError(null);
 
     try {
-      // const tradeDocRef = doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, selectedTradeForJournal); // Commented out
-      // void await updateDoc(tradeDocRef, { // Commented out
-      //   journalEntry: journalEntry, // Commented out
-      // }); // Commented out
+      const tradeDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, selectedTradeForJournal);
+      await firestoreModule.updateDoc(tradeDocRef, {
+        journalEntry: journalEntry,
+      });
 
       setCurrentAlert({ message: "Journal entry saved successfully!", type: "success" });
       setJournalEntry("");
@@ -794,86 +581,42 @@ function TradingDashboardContent() {
     }
   };
 
-  // Handler to trigger the custom confirmation modal
-  const handleDeleteTradeLogClick = (tradeId: string) => {
-    setTradeIdToDelete(tradeId);
-    setShowConfirmDeleteModal(true);
-  };
-
-  // Actual deletion handler (called by custom modal)
-  const confirmDeleteTradeLog = async () => {
-    setShowConfirmDeleteModal(false); // Close modal
-    if (!tradeIdToDelete) return;
-
-    if (!db || !userId || !isAuthReady) {
+  const handleDeleteTradeLog = async (tradeId: string) => {
+    // Check if Firebase is ready before proceeding
+    if (!db || !userId || !isAuthReady || !isFirebaseServicesReady || !firestoreModule) {
       setCurrentAlert({ message: "Trade log deletion service not ready. Please wait a moment for authentication to complete.", type: "warning" });
-      console.warn("DIAG: Attempted to delete trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady);
+      console.warn("DIAG: Attempted to delete trade log, but Firebase not ready. State: db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
       return;
     }
 
     setTradeLogError(null);
-    try {
-      // const tradeDocRef = doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, tradeIdToDelete); // Commented out
-      // void await deleteDoc(tradeDocRef); // Commented out
-      setCurrentAlert({ message: "Trade log deleted successfully!", type: "success" });
-      console.log("DIAG: Trade log deleted:", tradeIdToDelete);
-      setTradeIdToDelete(null); // Clear the ID after deletion
-    } catch (error: any) {
-      console.error("DIAG: Error deleting trade log:", error);
-      setTradeLogError(error.message || "Failed to delete trade log.");
-      setCurrentAlert({ message: `Failed to delete trade log: ${error.message}`, type: "error" });
-    }
-  };
-
-  // Cancel deletion handler
-  const cancelDeleteTradeLog = () => {
-    setShowConfirmDeleteModal(false);
-    setTradeIdToDelete(null);
-  };
-
-
-  const handleChatInputKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    console.log("DIAG: KeyDown detected:", e.key, "Shift pressed:", e.shiftKey, "isSendingMessage:", isSendingMessage);
-
-    if (e.key === 'Enter') {
-      if (e.shiftKey) {
-        console.log("DIAG: Shift + Enter detected. Allowing default (new line).");
-      } else {
-        e.preventDefault();
-        console.log("DIAG: Enter (no Shift) detected. Preventing default, attempting to send message.");
-        if (!isSendingMessage) {
-            if (messageInput.trim()) {
-              if (!currentChatSessionId) {
-                console.log("DIAG: No current chat session, attempting to create new conversation before sending.");
-                // const newSessionId = await handleNewConversation(); // Commented out
-                // if (newSessionId) {
-                //     void await handleSendMessage();
-                // } else {
-                //     console.error("DIAG: Failed to create new conversation, message not sent.");
-                // }
-              } else {
-                // void await handleSendMessage(); // Commented out
-              }
-            } else {
-              console.log("DIAG: Message input is empty or whitespace, not sending.");
-            }
-        } else {
-            console.log("DIAG: Already sending message, ignoring Enter key press.");
-        }
+    // IMPORTANT: Replace window.confirm with a custom modal for production apps.
+    // For this debug session, it's left as is for simplicity, but in Canvas/Production,
+    // this would be replaced with a proper UI component.
+    if (window.confirm("Are you sure you want to delete this trade log?")) {
+      try {
+        const tradeDocRef = firestoreModule.doc(db, `artifacts/${appId}/users/${userId}/tradeLogs`, tradeId);
+        await firestoreModule.deleteDoc(tradeDocRef);
+        setCurrentAlert({ message: "Trade log deleted successfully!", type: "success" });
+        console.log("DIAG: Trade log deleted:", tradeId);
+      } catch (error: any) {
+        console.error("DIAG: Error deleting trade log:", error);
+        setTradeLogError(error.message || "Failed to delete trade log.");
+        setCurrentAlert({ message: `Failed to delete trade log: ${error.message}`, type: "error" });
       }
     }
-  }, [messageInput, isSendingMessage]); // Removed currentChatSessionId, handleSendMessage, handleNewConversation
-
+  };
 
   // --- USE EFFECTS ---
-  /*
-  useEffect(() => {
-    console.log("DIAG: useEffect for chat sessions listener triggered. db ready:", !!db, "userId ready:", !!userId, "isAuthReady:", isAuthReady);
-    if (db && userId && isAuthReady) {
-      const sessionsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions`);
-      const q = query(sessionsCollectionRef, orderBy('createdAt', 'desc'));
 
-      const unsubscribe = onSnapshot(q, (snapshot: any) => {
+  useEffect(() => {
+    console.log("DIAG: useEffect for chat sessions listener triggered. db ready:", !!db, "userId ready:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
+    // Only proceed if Firebase services are ready and user is authenticated
+    if (db && userId && isAuthReady && isFirebaseServicesReady && firestoreModule) {
+      const sessionsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions`);
+      const q = firestoreModule.query(sessionsCollectionRef, firestoreModule.orderBy('createdAt', 'desc'));
+
+      const unsubscribe = firestoreModule.onSnapshot(q, (snapshot: any) => {
         console.log("DIAG: onSnapshot for chat sessions received data.");
         const sessions = snapshot.docs.map((doc: any) => ({
           id: doc.id,
@@ -903,19 +646,19 @@ function TradingDashboardContent() {
         unsubscribe();
       };
     } else {
-      setChatSessions([]);
-      console.log("DIAG: Chat sessions cleared or listener skipped. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, ")");
+      setChatSessions([]); // Clear sessions if not ready
+      console.log("DIAG: Chat sessions listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatSessions, setCurrentChatSessionId, setCurrentAlert, appId]);
-
+  }, [db, userId, isAuthReady, isFirebaseServicesReady, currentChatSessionId, firestoreModule]);
 
   useEffect(() => {
-    console.log("DIAG: useEffect for chat messages listener triggered. db ready:", !!db, "userId ready:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isAuthReady:", isAuthReady);
-    if (db && userId && currentChatSessionId && isAuthReady) {
-      const messagesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
-      const q = query(messagesCollectionRef, orderBy('timestamp', 'asc'));
+    console.log("DIAG: useEffect for chat messages listener triggered. db ready:", !!db, "userId ready:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
+    // Only proceed if Firebase services are ready, user is authenticated, and a chat session is selected
+    if (db && userId && currentChatSessionId && isAuthReady && isFirebaseServicesReady && firestoreModule) {
+      const messagesCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/chatSessions/${currentChatSessionId}/messages`);
+      const q = firestoreModule.query(messagesCollectionRef, firestoreModule.orderBy('timestamp', 'asc'));
 
-      const unsubscribe = onSnapshot(q, (snapshot: any) => {
+      const unsubscribe = firestoreModule.onSnapshot(q, (snapshot: any) => {
         console.log("DIAG: onSnapshot for chat messages received data for session:", currentChatSessionId);
         const messages = snapshot.docs.map((doc: any) => ({
           id: doc.id,
@@ -923,9 +666,8 @@ function TradingDashboardContent() {
           text: doc.data().text,
           timestamp: doc.data().timestamp,
           type: doc.data().type || 'text',
-          audioUrl: doc.data().audioUrl || undefined,
-          analysis: doc.data().analysis || undefined,
-        })) as ChatMessage[];
+          audioUrl: doc.data().audioUrl || undefined
+        })) as { id: string; sender: string; text: string; timestamp?: any; type?: string; audioUrl?: string }[];
         setChatMessages(messages);
       }, (error: any) => {
         console.error("DIAG: Error fetching messages for session", currentChatSessionId, ":", error);
@@ -937,17 +679,16 @@ function TradingDashboardContent() {
         unsubscribe();
       };
     } else {
-      setChatMessages([]);
-      console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isAuthReady:", isAuthReady, ")");
+      setChatMessages([]); // Clear messages if not ready or no session
+      console.log("DIAG: Chat messages cleared or listener skipped. (db:", !!db, "userId:", !!userId, "currentChatSessionId:", !!currentChatSessionId, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, currentChatSessionId, isAuthReady, setChatMessages, setCurrentAlert, appId]);
+  }, [db, userId, currentChatSessionId, isFirebaseServicesReady, isAuthReady, firestoreModule]);
 
   useEffect(() => {
     if (chatMessagesEndRef.current) {
         chatMessagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [chatMessages, activeView, isChatHistoryMobileOpen]);
-
 
   const fetchMarketPricesData = useCallback(async (initialLoad = false) => {
     console.log("DIAG: Fetching market prices from:", BACKEND_BASE_URL + "/all_market_prices");
@@ -972,16 +713,14 @@ function TradingDashboardContent() {
         setLoadingPrices(false);
       }
     }
-  }, [setLoadingPrices, setErrorPrices, setMarketPrices, BACKEND_BASE_URL]);
-
+  }, []);
 
   useEffect(() => {
-    // void fetchMarketPricesData(true); // Commented out
+    fetchMarketPricesData(true);
 
-    // const intervalId = setInterval(() => void fetchMarketPricesData(false), 10000); // Commented out
-    // return () => clearInterval(intervalId); // Commented out
-  }, [/* fetchMarketPricesData */]); // Removed dependency array
-
+    const intervalId = setInterval(() => fetchMarketPricesData(false), 10000);
+    return () => clearInterval(intervalId);
+  }, [fetchMarketPricesData]);
 
   const fetchAnalysisLivePrice = useCallback(async (pair: string) => {
     console.log("DIAG: Fetching analysis live price for:", pair, "from:", BACKEND_BASE_URL + "/all_market_prices");
@@ -1004,55 +743,56 @@ function TradingDashboardContent() {
       console.error("DIAG: Error fetching live price for analysis page:", e);
       setCurrentLivePrice('Error');
     }
-  }, [setCurrentLivePrice, BACKEND_BASE_URL]);
+  }, []);
 
   useEffect(() => {
     if (activeView === 'analysis') {
-      // void fetchAnalysisLivePrice(analysisCurrencyPair); // Commented out
-      // const intervalId = setInterval(() => void fetchAnalysisLivePrice(analysisCurrencyPair), 10000); // Commented out
-      // return () => clearInterval(intervalId); // Commented out
+      fetchAnalysisLivePrice(analysisCurrencyPair);
+      const intervalId = setInterval(() => fetchAnalysisLivePrice(analysisCurrencyPair), 10000);
+      return () => clearInterval(intervalId);
     }
-  }, [activeView, analysisCurrencyPair, /* fetchAnalysisLivePrice */]); // Removed fetchAnalysisLivePrice from dependencies
+  }, [activeView, analysisCurrencyPair, fetchAnalysisLivePrice]);
 
+  // Effect for fetching Trade Logs
   useEffect(() => {
-    console.log("DIAG: useEffect for trade logs listener triggered. db ready:", !!db, "userId ready:", !!userId, "isAuthReady:", isAuthReady);
-    if (db && userId && isAuthReady) {
+    console.log("DIAG: useEffect for trade logs listener triggered. db ready:", !!db, "userId ready:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule);
+    // Only proceed if Firebase services are ready and user is authenticated
+    if (db && userId && isAuthReady && isFirebaseServicesReady && firestoreModule) {
       setLoadingTradeLogs(true);
-      // const tradeLogsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`); // Commented out
-      // const q = query(tradeLogsCollectionRef, orderBy('timestamp', 'desc')); // Commented out
+      const tradeLogsCollectionRef = firestoreModule.collection(db, `artifacts/${appId}/users/${userId}/tradeLogs`);
+      const q = firestoreModule.query(tradeLogsCollectionRef, firestoreModule.orderBy('timestamp', 'desc'));
 
-      // const unsubscribe = onSnapshot(q, (snapshot: any) => { // Commented out
-      //   console.log("DIAG: onSnapshot for trade logs received data."); // Commented out
-      //   const logs = snapshot.docs.map((doc: any) => ({ // Commented out
-      //     id: doc.id, // Commented out
-      //     currencyPair: doc.data().currencyPair, // Commented out
-      //     entryPrice: doc.data().entryPrice, // Commented out
-      //     exitPrice: doc.data().exitPrice, // Commented out
-      //     volume: doc.data().volume, // Commented out
-      //     profitOrLoss: doc.data().profitOrLoss, // Commented out
-      //     timestamp: doc.data().timestamp, // Commented out
-      //     journalEntry: doc.data().journalEntry || '', // Commented out
-      //   })) as TradeLogEntry[]; // Commented out
-      //   setTradeLogs(logs); // Commented out
-      //   setLoadingTradeLogs(false); // Commented out
-      // }, (error: any) => { // Commented out
-      //   console.error("DIAG: Error fetching trade logs:", error); // Commented out
-      //   setTradeLogError(error.message || "Failed to load trade logs."); // Commented out
-      //   setCurrentAlert({ message: `Failed to load trade logs: ${error.message || 'Unknown error'}`, type: "error" }); // Commented out
-      //   setLoadingTradeLogs(false); // Commented out
-      // }); // Commented out
+      const unsubscribe = firestoreModule.onSnapshot(q, (snapshot: any) => {
+        console.log("DIAG: onSnapshot for trade logs received data.");
+        const logs = snapshot.docs.map((doc: any) => ({
+          id: doc.id,
+          currencyPair: doc.data().currencyPair,
+          entryPrice: doc.data().entryPrice,
+          exitPrice: doc.data().exitPrice,
+          volume: doc.data().volume,
+          profitOrLoss: doc.data().profitOrLoss,
+          timestamp: doc.data().timestamp,
+          journalEntry: doc.data().journalEntry || '',
+        })) as TradeLogEntry[];
+        setTradeLogs(logs);
+        setLoadingTradeLogs(false);
+      }, (error: any) => {
+        console.error("DIAG: Error fetching trade logs:", error);
+        setTradeLogError(error.message || "Failed to load trade logs.");
+        setCurrentAlert({ message: `Failed to load trade logs: ${error.message || 'Unknown error'}`, type: "error" });
+        setLoadingTradeLogs(false);
+      });
 
-      // return () => { // Commented out
-      //   console.log("DIAG: Cleaning up trade logs listener."); // Commented out
-      //   // unsubscribe(); // Commented out
-      // }; // Commented out
+      return () => {
+        console.log("DIAG: Cleaning up trade logs listener.");
+        unsubscribe();
+      };
     } else {
-      setTradeLogs([]);
+      setTradeLogs([]); // Clear logs if not ready
       setLoadingTradeLogs(false);
-      console.log("DIAG: Trade logs listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, ")");
+      console.log("DIAG: Trade logs listener not ready. Skipping. (db:", !!db, "userId:", !!userId, "isAuthReady:", isAuthReady, "isFirebaseServicesReady:", isFirebaseServicesReady, "firestoreModule:", !!firestoreModule, ")");
     }
-  }, [db, userId, isAuthReady, setLoadingTradeLogs, setTradeLogs, setTradeLogError, setCurrentAlert, appId]);
-  */
+  }, [db, userId, isAuthReady, isFirebaseServicesReady, firestoreModule]);
 
   return (
     <div className="flex h-screen bg-gray-900 text-white">
@@ -1142,9 +882,9 @@ function TradingDashboardContent() {
             <Menu className="h-6 w-6" />
           </button>
           <h1 className="text-xl font-semibold">Aura Trading Dashboard</h1>
-          <div className="ml-auto flex items-center space-x-4">
+          <div className="flex items-center space-x-4">
             <Bell className="h-6 w-6 text-gray-400" />
-            <span className="text-sm text-gray-400 mr-2">User ID: {userId ? `${userId.substring(0, 8)}...)` : 'Loading User...'}</span>
+            <span className="text-sm text-gray-400 mr-2">User ID: {isAuthReady && isFirebaseServicesReady && userId ? `${userId.substring(0, 8)}...` : 'Loading User...'}</span>
             <User className="h-6 w-6 text-gray-400" />
           </div>
         </header>
@@ -1152,15 +892,6 @@ function TradingDashboardContent() {
         <div className="flex-1 overflow-auto">
           <main className="flex-1 p-6">
             {currentAlert && <CustomAlert message={currentAlert.message} type={currentAlert.type} onClose={() => setCurrentAlert(null)} />}
-            {showConfirmDeleteModal && (
-                <CustomConfirmModal
-                    message="Are you sure you want to delete this trade log? This action cannot be undone."
-                    // onConfirm={confirmDeleteTradeLog} // Commented out
-                    // onCancel={cancelDeleteTradeLog} // Commented out
-                    onConfirm={() => console.log('Confirm delete clicked (handler commented)')}
-                    onCancel={() => console.log('Cancel delete clicked (handler commented)')}
-                />
-            )}
 
             {/* Dashboard View (Market Overview) */}
             {activeView === "dashboard" && (
@@ -1209,14 +940,9 @@ function TradingDashboardContent() {
                   </div>
 
                   <div className="bg-gray-800/50 rounded-lg p-6 shadow-lg border border-gray-700">
-                    <h3 className="text-xl font-semibold mb-4">Recent Alerts (Placeholder)</h3>
-                    <p className="text-gray-400">Content for recent alerts will go here.</p>
+                    <h3 className="text-xl font-semibold mb-4">Market Selection (Placeholder)</h3>
+                    <p className="text-gray-400">Content for market selection will go here.</p>
                   </div>
-                </div>
-
-                <div className="bg-gray-800/50 rounded-lg p-6 shadow-lg border border-gray-700">
-                  <h3 className="text-xl font-semibold mb-4">MARKET SELECTION (Placeholder)</h3>
-                  <p className="text-gray-400">Content for market selection will go here.</p>
                 </div>
               </div>
             )}
@@ -1224,28 +950,34 @@ function TradingDashboardContent() {
             {/* Chat View */}
             {activeView === "chat" && (
               <div className="flex flex-col md:flex-row h-full bg-gray-900 rounded-lg shadow-xl overflow-hidden relative">
+                {/* Chat Header - Grok-like */}
                 <div className="flex items-center justify-between p-4 md:px-6 md:py-4 border-b border-gray-800 flex-shrink-0">
                   <button
                       className="md:hidden text-gray-400 hover:text-white"
-                      // onClick={() => { /* currentChatSessionId ? setCurrentChatSessionId(null); setChatMessages([]); */ }} // Commented out
+                      onClick={() => {
+                        if (currentChatSessionId) {
+                            setCurrentChatSessionId(null);
+                            setChatMessages([]);
+                        }
+                      }}
                   >
-                      {/* currentChatSessionId ? <X className="h-6 w-6" /> : null */}
+                      {currentChatSessionId ? <X className="h-6 w-6" /> : null}
                   </button>
 
                   <div className="flex-1 text-center font-semibold text-lg text-gray-300">
-                    Aura Bot {userId ? `${userId.substring(0, 8)}...)` : ''}
+                    Aura Bot {userId ? `(${userId.substring(0, 8)}...)` : ''}
                   </div>
 
                   <div className="flex space-x-2">
                     <button
-                      // onClick={handleNewConversation} // Commented out
+                      onClick={handleNewConversation}
                       className="p-2 rounded-full bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center transition-all duration-200"
                       title="New Chat"
                     >
                       <SquarePen className="h-5 w-5" />
                     </button>
                     <button
-                      // onClick={() => setIsChatHistoryMobileOpen(true)} // Commented out
+                      onClick={() => setIsChatHistoryMobileOpen(true)}
                       className="p-2 rounded-full bg-gray-700 hover:bg-gray-600 text-gray-300 flex items-center justify-center transition-all duration-200"
                       title="View History"
                     >
@@ -1256,7 +988,9 @@ function TradingDashboardContent() {
 
                 {/* Main Chat Content Area */}
                 {currentChatSessionId ? (
+                  // Active Conversation View
                   <div className="flex-1 flex flex-col relative overflow-hidden">
+                    {/* Messages Container (scrollable) */}
                     <div className="flex-1 overflow-y-auto px-6 py-4 custom-scrollbar" style={{ paddingBottom: '88px' }}>
                       <div className="space-y-4">
                         {chatMessages.map((msg) => (
@@ -1271,40 +1005,62 @@ function TradingDashboardContent() {
                                   : "bg-gray-700 text-gray-200"
                               } break-words`}
                             >
-                               <div className="prose prose-invert prose-p:my-1 prose-li:my-1 prose-li:leading-tight prose-ul:my-1 text-sm leading-relaxed">
-                                  <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+                              {/* Conditionally render with ReactMarkdown for AI messages */}
+                              {msg.sender === "ai" ? (
+                                <div className="prose prose-invert prose-p:my-1 prose-li:my-1 prose-li:leading-tight prose-ul:my-1 text-sm leading-relaxed">
+                                  <ReactMarkdown
+                                    rehypePlugins={[rehypeRaw]}
+                                    components={{
+                                      // Custom components for styling Markdown elements
+                                      p: ({node, ...props}) => <p className="mb-2" {...props} />,
+                                      ul: ({node, ...props}) => <ul className="list-disc list-inside mb-2" {...props} />,
+                                      ol: ({node, ...props}) => <ol className="list-decimal list-inside mb-2" {...props} />,
+                                      li: ({node, ...props}) => <li className="ml-4" {...props} />,
+                                      strong: ({node, ...props}) => <strong className="font-semibold text-white" {...props} />,
+                                      em: ({node, ...props}) => <em className="italic" {...props} />,
+                                      h1: ({node, ...props}) => <h1 className="text-xl font-bold mt-4 mb-2" {...props} />,
+                                      h2: ({node, ...props}) => <h2 className="text-lg font-bold mt-3 mb-1" {...props} />,
+                                      h3: ({node, ...props}) => <h3 className="text-md font-semibold mt-2 mb-1" {...props} />,
+                                    }}
+                                  >
                                     {msg.text}
                                   </ReactMarkdown>
                                 </div>
-                                {msg.timestamp && typeof msg.timestamp.toDate === 'function' && (
-                                    <p className="text-xs text-gray-400 mt-1 text-right">
-                                        {/* msg.timestamp.toDate().toLocaleString() */}
-                                        Timestamp Placeholder
-                                    </p>
-                                )}
+                              ) : (
+                                <p>{msg.text}</p>
+                              )}
+                              {msg.timestamp && typeof msg.timestamp.toDate === 'function' && (
+                                  <p className="text-xs text-gray-400 mt-1 text-right">
+                                      {msg.timestamp.toDate().toLocaleString()}
+                                  </p>
+                              )}
                             </div>
                           </div>
                         ))}
+                        <div ref={chatMessagesEndRef} />
                       </div>
-                      <div ref={chatMessagesEndRef} />
                     </div>
 
                     {/* Input area (fixed at bottom) */}
                     <div className="absolute bottom-0 left-0 right-0 p-4 bg-gray-900 border-t border-gray-800 z-10">
                       <div className="relative flex items-center w-full bg-gray-800 rounded-lg border border-gray-700 pr-2">
-                        <textarea
-                          placeholder="Ask anything (Shift + Enter for new line)"
-                          className="flex-1 bg-transparent text-white rounded-lg px-4 py-3 focus:outline-none resize-y min-h-[40px] max-h-[120px] custom-scrollbar"
+                        <input
+                          type="text"
+                          placeholder="Ask anything"
+                          className="flex-1 bg-transparent text-white rounded-lg px-4 py-3 focus:outline-none"
                           value={messageInput}
                           onChange={(e) => setMessageInput(e.target.value)}
-                          onKeyDown={handleChatInputKeyDown}
-                          rows={Math.min(5, (messageInput.split('\n').length || 1))}
+                          onKeyPress={(e) => {
+                            if (e.key === "Enter" && !isSendingMessage) {
+                              handleSendMessage();
+                            }
+                          }}
                           disabled={isSendingMessage}
                         />
                         <button
                           className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
-                          // onClick={() => void handleSendMessage(false)} // Commented out
-                          disabled={isSendingMessage || !messageInput.trim()}
+                          onClick={() => handleSendMessage()}
+                          disabled={isSendingMessage}
                         >
                           {isSendingMessage ? (
                             <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -1312,14 +1068,14 @@ function TradingDashboardContent() {
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                             </svg>
                           ) : (
-                            <Send className="h-5 w-5" />
+                            <Send classAnnounce missive text-white" />
                           )}
                         </button>
                         <button
-                          // onClick={async () => { /* isVoiceRecording ? handleStopVoiceRecording() : await handleStartVoiceRecording() */ }} // Commented out
+                          onClick={isVoiceRecording ? handleStopVoiceRecording : handleStartVoiceRecording}
                           className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
                           title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}
-                          disabled={isSendingMessage || !currentChatSessionId}
+                          disabled={!currentChatSessionId}
                         >
                           {isVoiceRecording ? <Volume2 className="h-5 w-5 text-white animate-pulse" /> : <Mic className="h-5 w-5 text-white" />}
                         </button>
@@ -1335,19 +1091,33 @@ function TradingDashboardContent() {
 
                     <div className="relative w-full max-w-xl mb-4">
                       <div className="relative flex items-center w-full bg-gray-800 rounded-lg border border-gray-700 pr-2">
-                        <textarea
-                          placeholder="Ask anything (Shift + Enter for new line)"
-                          className="flex-1 bg-transparent text-white rounded-lg px-4 py-3 focus:outline-none resize-y min-h-[40px] max-h-[120px] custom-scrollbar"
+                        <input
+                          type="text"
+                          placeholder="Ask anything"
+                          className="flex-1 bg-transparent text-white rounded-lg px-4 py-3 focus:outline-none"
                           value={messageInput}
                           onChange={(e) => setMessageInput(e.target.value)}
-                          onKeyDown={handleChatInputKeyDown}
-                          rows={Math.min(5, (messageInput.split('\n').length || 1))}
+                          onKeyPress={(e) => {
+                            if (e.key === "Enter" && !isSendingMessage) {
+                              if (messageInput.trim()) {
+                                handleNewConversation().then(() => {
+                                  handleSendMessage();
+                                });
+                              }
+                            }
+                          }}
                           disabled={isSendingMessage}
                         />
                         <button
                           className="p-2 text-white rounded-full bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50 transition-all duration-200"
-                          // onClick={async () => { /* if (messageInput.trim()) { if (!currentChatSessionId) { const newSessionId = await handleNewConversation(); if (!newSessionId) return; } void await handleSendMessage(); } */ }} // Commented out
-                          disabled={isSendingMessage || !messageInput.trim()}
+                          onClick={() => {
+                            if (messageInput.trim()) {
+                              handleNewConversation().then(() => {
+                                handleSendMessage();
+                              });
+                            }
+                          }}
+                          disabled={isSendingMessage}
                         >
                           {isSendingMessage ? (
                             <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -1357,14 +1127,6 @@ function TradingDashboardContent() {
                           ) : (
                             <Send className="h-5 w-5" />
                           )}
-                        </button>
-                        <button
-                          // onClick={async () => { /* if (!currentChatSessionId) { const newSessionId = await handleNewConversation(); if (!newSessionId) return; } isVoiceRecording ? handleStopVoiceRecording() : await handleStartVoiceRecording() */ }} // Commented out
-                          className={`ml-2 p-2 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500 ${isVoiceRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
-                          title={isVoiceRecording ? "Stop Recording" : "Start Voice Recording"}
-                          disabled={isSendingMessage}
-                        >
-                          {isVoiceRecording ? <Volume2 className="h-5 w-5 text-white animate-pulse" /> : <Mic className="h-5 w-5 text-white" />}
                         </button>
                       </div>
                     </div>
@@ -1388,8 +1150,7 @@ function TradingDashboardContent() {
                 >
                   <div className="flex items-center justify-between p-4 border-b border-gray-800 flex-shrink-0">
                     <h3 className="text-xl font-extrabold text-indigo-400">History</h3>
-                    <button // onClick={() => setIsChatHistoryMobileOpen(false)} // Commented out
-                    className="text-gray-400 hover:text-white">
+                    <button onClick={() => setIsChatHistoryMobileOpen(false)} className="text-gray-400 hover:text-white">
                       <X className="h-6 w-6" />
                     </button>
                   </div>
@@ -1398,7 +1159,7 @@ function TradingDashboardContent() {
                       chatSessions.map((session) => (
                         <div
                           key={session.id}
-                          // onClick={() => handleSwitchConversation(session.id)} // Commented out
+                          onClick={() => handleSwitchConversation(session.id)}
                           className={`p-3 rounded-lg cursor-pointer transition duration-150 ease-in-out
                             ${session.id === currentChatSessionId ? 'bg-indigo-700 text-white shadow-lg' : 'bg-gray-700 text-gray-200 hover:bg-gray-600'}`
                           }
@@ -1409,8 +1170,7 @@ function TradingDashboardContent() {
                           </p>
                           {session.createdAt && typeof session.createdAt.toDate === 'function' && (
                             <p className="text-xs text-gray-500 mt-1">
-                              {/* session.createdAt.toDate().toLocaleDateString() */}
-                              Date Placeholder
+                              {session.createdAt.toDate().toLocaleDateString()}
                             </p>
                           )}
                         </div>
@@ -1421,7 +1181,7 @@ function TradingDashboardContent() {
                   </div>
                   <div className="p-4 border-t border-gray-800 flex-shrink-0">
                     <button
-                      // onClick={handleNewConversation} // Commented out
+                      onClick={handleNewConversation}
                       className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 transition duration-200 ease-in-out transform hover:scale-105"
                     >
                       <Plus className="inline-block w-5 h-5 mr-2" /> Start New Chat
@@ -1464,7 +1224,7 @@ function TradingDashboardContent() {
                           {availableTimeframes.map(tf => (
                             <button
                               key={tf}
-                              // onClick={() => handleTimeframeButtonClick(tf)} // Commented out
+                              onClick={() => handleTimeframeButtonClick(tf)}
                               className={`px-3 py-2 rounded-md text-sm font-medium transition-colors
                                 ${analysisTimeframes.includes(tf)
                                   ? 'bg-purple-600 text-white'
@@ -1511,7 +1271,7 @@ function TradingDashboardContent() {
                           <input
                             type="checkbox"
                             checked={analysisIndicators.includes(indicator.name)}
-                            // onChange={() => handleIndicatorChange(indicator.name)} // Commented out
+                            onChange={() => handleIndicatorChange(indicator.name)}
                             className="w-4 h-4 text-purple-600 bg-gray-700 border-gray-600 rounded focus:ring-purple-500"
                           />
                         </div>
@@ -1556,7 +1316,7 @@ function TradingDashboardContent() {
                       </div>
 
                       <button
-                        // onClick={handleRunAnalysis} // Commented out
+                        onClick={handleRunAnalysis}
                         disabled={isAnalyzing}
                         className="w-full inline-flex items-center justify-center px-5 py-3 rounded-lg font-semibold bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 transition-all duration-200 disabled:opacity-50"
                       >
@@ -1643,6 +1403,7 @@ function TradingDashboardContent() {
                         <span className="text-sm">Powered by Gemini AI</span>
                       </div>
                     </div>
+
                     {isAnalyzing && (
                       <div className="text-center p-10 text-gray-500">
                         <div className="flex items-center justify-center mt-4">
@@ -1680,302 +1441,4 @@ function TradingDashboardContent() {
                           </h4>
                           <div className="space-y-2">
                             <div className="flex justify-between items-center">
-                              <span className="text-gray-300">Entry Type:</span>
-                              <span className="font-bold text-emerald-400">{analysisResults.ai_suggestion.entry_type}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <span className="text-gray-300">Recommended Action:</span>
-                              <span className="font-bold text-emerald-400">{analysisResults.ai_suggestion.recommended_action}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <span className="text-gray-300">Position Size:</span>
-                                <span className="font-bold text-white">{analysisResults.ai_suggestion.position_size}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {analysisResults.ormcr_confirmation_status === "STRONG CONFIRMATION" && (
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-lg text-center">
-                              <div className="text-sm text-red-300 mb-1">Stop Loss</div>
-                              <div className="text-xl font-bold text-red-400">{analysisResults.stop_loss.price}</div>
-                              <div className="text-xs text-red-300">{analysisResults.stop_loss.percentage_change}</div>
-                            </div>
-                            <div className="p-4 bg-emerald-900/20 border border-emerald-500/30 rounded-lg text-center">
-                              <div className="text-sm text-emerald-300 mb-1">Take Profit 1</div>
-                              <div className="text-xl font-bold text-emerald-400">{analysisResults.take_profit_1.price}</div>
-                              <div className="text-xs text-emerald-300">{analysisResults.take_profit_1.percentage_change}</div>
-                            </div>
-                            <div className="p-4 bg-emerald-900/20 border border-emerald-500/30 rounded-lg text-center">
-                              <div className="text-sm text-emerald-300 mb-1">Take Profit 2</div>
-                              <div className="text-xl font-bold text-emerald-400">{analysisResults.take_profit_2.price}</div>
-                              <div className="text-xs text-emerald-300">{analysisResults.take_profit_2.percentage_change}</div>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="p-4 bg-gray-700/30 rounded-lg">
-                          <h4 className="font-semibold text-white mb-3">Technical Indicators Analysis</h4>
-                          {analysisResults.technical_indicators_analysis && (
-                            <div className="mt-2 text-sm text-gray-300">
-                              <ReactMarkdown rehypePlugins={[rehypeRaw]}>
-                                {analysisResults.technical_indicators_analysis}
-                              </ReactMarkdown>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="p-4 bg-gray-700/30 rounded-lg">
-                          <h4 className="font-semibold text-white mb-3">Next Step for User</h4>
-                          <p className="text-gray-300 text-sm leading-relaxed">
-                            <ReactMarkdown rehypePlugins={[rehypeRaw]}>
-                                {analysisResults.next_step_for_user}
-                            </ReactMarkdown>
-                          </p>
-                        </div>
-
-                        <div className="flex gap-4">
-                          <button
-                            // onClick={handleChatAboutAnalysis} // Commented out
-                            className="flex-1 inline-flex items-center justify-center px-5 py-3 rounded-lg font-semibold bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 transition-all duration-200"
-                          >
-                            <MessageCircle className="w-4 h-4 mr-2" />
-                            Chat About This Analysis
-                          </button>
-                          <button className="inline-flex items-center justify-center px-5 py-3 rounded-lg font-semibold bg-gray-700 text-gray-300 hover:bg-gray-600 transition-all duration-200">
-                            <Save className="w-4 h-4 mr-2" />
-                            Save Analysis
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-center p-10 text-gray-500">
-                        <p>Run an AI analysis to see detailed results here.</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Trade Log View */}
-            {activeView === "trade-log" && (
-              <div className="flex flex-col space-y-6">
-                <h2 className="text-2xl font-bold text-white mb-6">Trade Log & Journal</h2>
-
-                {/* Add New Trade Form */}
-                <div className="bg-gray-800/40 rounded-xl shadow-lg border border-purple-500/30 p-6">
-                  <h3 className="text-lg font-semibold text-purple-300 mb-4">Add New Trade</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Currency Pair</label>
-                      <select
-                        className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
-                        value={tradeLogForm.currencyPair}
-                        onChange={(e) => setTradeLogForm({ ...tradeLogForm, currencyPair: e.target.value })}
-                      >
-                        <option>BTC/USD</option>
-                        <option>ETH/USD</option>
-                        <option>ADA/USD</option>
-                        <option>SOL/USD</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Entry Price</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
-                        placeholder="e.g., 29500.00"
-                        value={tradeLogForm.entryPrice}
-                        onChange={(e) => setTradeLogForm({ ...tradeLogForm, entryPrice: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Exit Price</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
-                        placeholder="e.g., 29750.00"
-                        value={tradeLogForm.exitPrice}
-                        onChange={(e) => setTradeLogForm({ ...tradeLogForm, exitPrice: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Volume (Units)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md px-4 py-2"
-                        placeholder="e.g., 0.1"
-                        value={tradeLogForm.volume}
-                        onChange={(e) => setTradeLogForm({ ...tradeLogForm, volume: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <button
-                    // onClick={handleAddTradeLog} // Commented out
-                    disabled={isAddingTrade}
-                    className="mt-6 w-full inline-flex items-center justify-center px-5 py-3 rounded-lg font-semibold bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 transition-all duration-200 disabled:opacity-50"
-                  >
-                    {isAddingTrade ? (
-                      <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                    ) : (
-                      <Plus className="w-4 h-4 mr-2" />
-                    )}
-                    {isAddingTrade ? "Adding Trade..." : "Add Trade"}
-                  </button>
-                  {tradeLogError && <p className="text-red-500 text-sm mt-2">{tradeLogError}</p>}
-                </div>
-
-                {/* Trade Log Table */}
-                <div className="bg-gray-800/40 rounded-xl shadow-lg border border-cyan-500/30 p-6">
-                  <h3 className="text-lg font-semibold text-cyan-300 mb-4">Your Trades</h3>
-                  {loadingTradeLogs && <p className="text-gray-400">Loading trade history...</p>}
-                  {!loadingTradeLogs && tradeLogs.length === 0 && (
-                    <p className="text-gray-400">No trades logged yet. Add your first trade above!</p>
-                  )}
-                  {!loadingTradeLogs && tradeLogs.length > 0 && (
-                    <div className="overflow-x-auto custom-scrollbar">
-                      <table className="min-w-full divide-y divide-gray-700">
-                        <thead>
-                          <tr>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Date</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Pair</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Entry</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Exit</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Volume</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">P/L</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Journal</th>
-                            <th className="px-4 py-2 text-left text-sm font-medium text-gray-300">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-800">
-                          {tradeLogs.map((trade) => (
-                            <tr key={trade.id} className="hover:bg-gray-700/50 transition-colors">
-                              <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300">
-                                {/* trade.timestamp && typeof trade.timestamp.toDate === 'function' ? trade.timestamp.toDate().toLocaleDateString() : 'N/A' */}
-                                Date Placeholder
-                              </td>
-                              <td className="px-4 py-3 whitespace-nowrap text-sm text-white">{trade.currencyPair}</td>
-                              <td className="px-4 py-3 whitespace-nowrap text-sm text-white">{trade.entryPrice.toFixed(2)}</td>
-                              <td className="px-4 py-3 whitespace-nowrap text-sm text-white">{trade.exitPrice.toFixed(2)}</td>
-                              <td className="px-4 py-3 whitespace-nowrap text-sm text-white">{trade.volume.toFixed(2)}</td>
-                              <td className={`px-4 py-3 whitespace-nowrap text-sm font-semibold ${trade.profitOrLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                {trade.profitOrLoss.toFixed(2)}
-                              </td>
-                              <td className="px-4 py-3 text-sm text-gray-400 max-w-xs truncate cursor-pointer"
-                                  title={trade.journalEntry || "No journal entry. Click to add/edit."}
-                                  // onClick={() => { setSelectedTradeForJournal(trade.id); setJournalEntry(trade.journalEntry || ''); }} // Commented out
-                                  >
-                                {trade.journalEntry ? trade.journalEntry : "Add Entry"}
-                              </td>
-                              <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
-                                <button
-                                  // onClick={() => { setSelectedTradeForJournal(trade.id); setJournalEntry(trade.journalEntry || ''); }} // Commented out
-                                  className="text-indigo-400 hover:text-indigo-500 mr-3"
-                                  title="Edit Journal"
-                                >
-                                  <Edit2 className="w-4 h-4" />
-                                </button>
-                                <button
-                                  // onClick={() => handleDeleteTradeLogClick(trade.id)} // Commented out
-                                  className="text-red-400 hover:text-red-500"
-                                  title="Delete Trade"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-
-                {/* Journal Entry Editor */}
-                {selectedTradeForJournal && (
-                  <div className="bg-gray-800/40 rounded-xl shadow-lg border border-emerald-500/30 p-6">
-                    <h3 className="text-lg font-semibold text-emerald-300 mb-4">Journal Entry for Trade ID: {selectedTradeForJournal.substring(0, 8)}...</h3>
-                    <textarea
-                      className="w-full bg-gray-800/50 border border-gray-600 text-white rounded-md p-4 h-32 resize-y focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      placeholder="Write your thoughts, strategies, and lessons learned from this trade..."
-                      value={journalEntry}
-                      onChange={(e) => setJournalEntry(e.target.value)}
-                    ></textarea>
-                    <div className="flex justify-end space-x-3 mt-4">
-                      <button
-                        // onClick={() => { setJournalEntry(""); setSelectedTradeForJournal(null); }} // Commented out
-                        className="px-4 py-2 rounded-lg bg-gray-700/50 text-gray-300 hover:bg-gray-600 transition-colors"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        // onClick={handleSaveJournalEntry} // Commented out
-                        disabled={isSavingJournal}
-                        className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
-                      >
-                        {isSavingJournal ? "Saving..." : "Save Journal Entry"}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Settings View */}
-            {activeView === "settings" && (
-              <div className="flex flex-col space-y-6">
-                <h2 className="text-2xl font-bold text-white mb-6">Settings</h2>
-
-                {/* API Configuration */}
-                <div className="bg-gray-800/40 rounded-xl shadow-lg border border-blue-500/30 p-6">
-                  <h3 className="text-lg font-semibold text-blue-300 mb-4">API Configuration</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Backend URL (Read-only)</label>
-                      <input
-                        type="text"
-                        readOnly
-                        className="w-full bg-gray-800/50 border border-gray-600 text-gray-400 rounded-md px-4 py-2 cursor-not-allowed"
-                        value={backendUrlSetting}
-                      />
-                      <p className="text-xs text-gray-500 mt-1">This is set via environment variables (NEXT_PUBLIC_BACKEND_BASE_URL).</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-1">App ID (Read-only)</label>
-                      <input
-                        type="text"
-                        readOnly
-                        className="w-full bg-gray-800/50 border border-gray-600 text-gray-400 rounded-md px-4 py-2 cursor-not-allowed"
-                        value={appId} {/* Displaying the actual appId that's read from env */}
-                      />
-                      <p className="text-xs text-gray-500 mt-1">This is set via environment variables (NEXT_PUBLIC_APP_ID).</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* User Preferences */}
-                <div className="bg-gray-800/40 rounded-xl shadow-lg border border-purple-500/30 p-6">
-                  <h3 className="text-lg font-semibold text-purple-300 mb-4">User Preferences (Placeholder)</h3>
-                  <p className="text-gray-400">Future settings like theme, notification preferences, etc., will be added here.</p>
-                  <div className="mt-4">
-                    <label className="flex items-center space-x-2">
-                      <input type="checkbox" className="form-checkbox text-purple-600 bg-gray-700 border-gray-600 rounded" />
-                      <span className="text-gray-300">Enable Dark Mode (Already default)</span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            )}
-          </main>
-        </div>
-      </div>
-    </div>
-  )
-}
+                              <span className="text-gray-300">
